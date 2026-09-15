@@ -1,7 +1,8 @@
 # MeetScribe Local Model Improvement: Double-Pass Approach & Prompt Engineering
 
 Created: 2026-04-24
-Last updated: 2026-08-15 — added Qwen3.8-27B evaluation (EN/TR/DE, via millet's real two-pass code path); reconciled recommendations.
+Last updated: 2026-09-15 — added a `nemotron-3-nano:4b` evaluation for the zero-network **fallback floor** (millet 0.21.0's `tinfoil → venice → near → ollama` chain); positioned it below the standing `qwen3.8:27b` recommendation.
+Earlier: 2026-08-15 — added Qwen3.8-27B evaluation (EN/TR/DE, via millet's real two-pass code path); reconciled recommendations.
 Context: Research session evaluating local models as potential replacements for Sonnet 4.6 in meetscribe's meeting transcript summarization pipeline.
 
 > **TL;DR (2026-08-15):** With the two-pass extraction-truncation fix in
@@ -12,6 +13,20 @@ Context: Research session evaluating local models as potential replacements for 
 > RTX 3090. It supersedes the earlier "gpt-oss:20b is the best local"
 > conclusion below. Caveats: ~2× slower than Sonnet; a mild tendency to
 > over-count "decisions"; validated on 3 EN + 1 TR + 1 DE meetings.
+
+> **TL;DR (2026-09-15) — the fallback floor is a different, lower bar.**
+> millet 0.21.0 added a `tinfoil → venice → near → ollama` summary chain; the
+> `ollama` tier is the zero-network floor that runs only when every attested
+> TEE provider is unreachable. `nemotron-3-nano:4b` (2.8 GB, the one Nemotron
+> that fits a 12 GB RTX 5070) was evaluated for it and is **fit as a last
+> resort only.** On one hard 1h18m ~28-speaker all-hands it covered **≤ 43 %**
+> of topics vs a `glm-5-3-flash (TEE)` baseline's 100 %: two-pass caught only
+> the meeting's opening (and fabricated a "decision"), single-pass only the
+> closing (and broke format), `:4b-q8_0` looped. Context fit was **not** the
+> limiter (num_ctx ≈ 19.5k, well under ceiling) — 4B attention capacity was.
+> It does **not** approach `qwen3.8:27b`; it exists so a network outage yields
+> *some* summary rather than none. See "Nemotron-3-Nano-4B Floor Evaluation
+> (2026-09-15)" below.
 
 ---
 
@@ -538,6 +553,92 @@ Remaining gaps to close before a stronger claim: larger non-English sample
 
 ---
 
+## Nemotron-3-Nano-4B Floor Evaluation (2026-09-15)
+
+A different question from the rest of this doc, at a lower bar. millet 0.21.0
+added a summary fallback chain — `tinfoil → venice → near → ollama` (two
+attested TEE providers between the primary enclave and the local model). The
+`ollama` tier is the **zero-network privacy floor**: it runs only when every
+attested provider is unreachable, so "degrade quality, never confidentiality"
+already applies. NVIDIA's Jetson-optimized `nemotron-3-nano` was proposed for
+it because it is the one Nemotron that fits the saray target (RTX 5070, 12 GB).
+The question here is narrow: **on a real, hard meeting, is the 4B floor an
+acceptable last resort?**
+
+### Method
+
+One anonymized meeting **J** with an existing on-disk production summary:
+EN, ~15.2K tokens (60,652 chars / 10,378 words), ~28 speakers, 1h18m — a dense
+all-hands, the hardest case in this doc. Baseline is the production **primary**
+`glm-5-3-flash (TEE)` summary (not a cloud model). Generated via
+`millet.summarize.summarize()` — the same entry point production uses (same
+prompts, two-pass logic, dynamic `num_ctx`) — on the real target hardware
+(RTX 5070, 12 GB) through the local Ollama tier. Meetings are anonymized;
+only metrics are shown.
+
+Dynamic `num_ctx` resolved to ≈ 19,456 — well under the 65,536 ceiling — so
+**context fit was NOT the limiter; model capacity was.** Coverage is scored as
+topic-presence against 28 distinct meeting-wide subjects the baseline captured
+(**T** = topics/28); other columns are worst duplicate-line count
+(degeneration), a hallucination spot-check, format + JSON-frontmatter
+compliance, output length, and time / peak VRAM.
+
+### Results
+
+| Config | Cov (T/28) | Words | Worst dup | Hallucination | Fmt / JSON | Time / VRAM |
+|--------|:-:|:-:|:-:|:-:|:-:|:-:|
+| baseline `glm-5-3-flash (TEE)` | 28/28 | 3854 | 1× | none | ok | — |
+| `nemotron-3-nano:4b` two-pass | 6/28 | 380 | 1× | fabricated decision | no JSON | 59 s / 3.1 GB |
+| `nemotron-3-nano:4b` single-pass | 12/28 | 603 | — | format-broken | no JSON | 10 s / 3.4 GB |
+| `nemotron-3-nano:4b-q8_0` two-pass | 10/28 | 885 | 6× | invented speaker | no JSON | 39 s / 4.3 GB |
+
+- **Complementary blindness.** Two-pass captured the meeting's *front* segment;
+  single-pass captured its *back*; the entire *middle* (roughly ten distinct
+  topics) was absent from all three. The model fixates on one contiguous span
+  and drops the rest — small-model attention collapse on a long input, not
+  truncation (context was sized to fit). This is why the two passes almost
+  never overlap.
+- **Precision fails, not just recall.** The two-pass run emitted a confident,
+  correctly-formatted *decision* that never happened in the meeting (a
+  fabricated pricing figure; not reproduced here per the metrics-only policy).
+  Structural metrics would have scored this run as passing — correct 5 sections
+  and 22 topic bullets — which is exactly the trap the grounded TEE evaluation
+  was built to avoid.
+- **q8 is not the fix.** The higher-precision quant of the *same 4B model*
+  covered no more of the meeting and degenerated into repetition (one action
+  item repeated 6×). The limiter is parameter count / attention, which
+  quantization does not change.
+- **It does fit and it is fast.** ≤ 4.3 GB peak VRAM on a 12 GB card, ≤ 59 s.
+  The 24 GB `nemotron-3-nano:latest` / `:30b` (Omni) tags do **not** fit 12 GB;
+  only the `:4b` family does.
+
+### Verdict
+
+`nemotron-3-nano:4b` is **fit as a last-resort, zero-network floor and nothing
+more.** When it runs at all, some summary beats no summary, and the tier only
+activates when every attested provider is down. It does **not** approach the
+standing `qwen3.8:27b` recommendation (which needs ≥18 GB and so will not fit
+the 12 GB floor target anyway), and it should not be promoted toward the
+primary/attested path. Operators should know that a network-outage summary of
+a *large* meeting will be partial and may contain a fabricated line.
+
+Follow-ups if the floor ever needs to be better (not done here): (1) chunked /
+map-reduce summarization so a long transcript is summarized in segments the 4B
+model can hold, then merged — this addresses the attention collapse directly,
+which context sizing does not; (2) a head-to-head against the prior default
+`qwen3.5:9b` (~6.6 GB, also fits 12 GB) on this same meeting before committing
+the floor's default model.
+
+> **Env note (millet 0.21.0):** the fallback floor's model is now set with
+> `MILLET_OLLAMA_MODEL` (e.g. `nemotron-3-nano:4b`), which overrides **only**
+> the `ollama` tier — distinct from `MILLET_SUMMARY_MODEL` (used elsewhere in
+> this doc), which targets the user's *chosen* backend. This keeps the floor's
+> per-host model choice from leaking into the primary/attested tiers. On a
+> 12 GB GPU, prefer a `:4b`-family Nemotron or `qwen3.5:9b`; the ≥18 GB
+> `qwen3.8:27b` recommendation above does not apply to the floor.
+
+---
+
 ## Appendix: Model-Specific Notes
 
 ### qwen3.8:27b (recommended local model, 2026-08-15)
@@ -547,6 +648,19 @@ Remaining gaps to close before a stronger claim: larger non-English sample
 - **Requires the v0.15.1 Pass-1 reserve fix** or it silently truncates.
 - Weaknesses: ~2× Sonnet latency; mild over-inclusion of "decisions".
 - Won't fit a 12 GB GPU — choose a smaller model there.
+
+### nemotron-3-nano:4b (zero-network fallback floor only, 2026-09-15)
+- 2.8 GB (`:4b`) / 4.2 GB (`:4b-q8_0`); fits a 12 GB GPU (RTX 5070) with headroom.
+  The 24 GB `:latest` / `:30b` (Omni) tags do **not** fit 12 GB.
+- Text-only in Ollama: it cannot load the multimodal Nemotrons' mmproj vision
+  weights, so the frames (screen-recording) path never routes to the floor.
+- For the `ollama` fallback tier of millet 0.21.0's `tinfoil → venice → near →
+  ollama` chain — set via `MILLET_OLLAMA_MODEL`. Fast (≤ 59 s, ≤ 4.3 GB VRAM).
+- **Weak on large meetings:** ≤ 43 % topic coverage vs the primary baseline on
+  a hard 1h18m all-hands (attention collapse, not context truncation); a
+  fabricated "decision" in two-pass; looping in `:4b-q8_0`. See the
+  "Nemotron-3-Nano-4B Floor Evaluation (2026-09-15)" section above. Acceptable
+  as a last resort (some summary beats none), not as a general summarizer.
 
 ### gpt-oss:20b (prior best local; now a fallback)
 - 13 GB, fits comfortably in 24 GB VRAM
