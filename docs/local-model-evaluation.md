@@ -639,6 +639,50 @@ the floor's default model.
 
 ---
 
+## 12 GB Floor Bake-Off (2026-09-15) — the floor should be `qwen3.5:9b`, not Nemotron
+
+The Nemotron floor eval above left ~7 GB of the 12 GB card unused, so a natural
+question was whether a bigger model that still fits would fix the coverage
+collapse. **No larger Nemotron fits** — the Nemotron 3 Nano family jumps 4B →
+31.6B (24 GB) with nothing between, and `:4b-bf16` (8 GB) is the same 4B
+capacity. So the headroom was spent on two higher-capacity **non-Nemotron**
+models that fit 12 GB, run on the same meeting **J** through the same
+`millet.summarize()` two-pass path on the RTX 5070.
+
+| Model | Size | Cov (T/24) | Words | Worst dup | Halluc. | Fit | Time / VRAM |
+|-------|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| baseline `glm-5-3-flash (TEE)` | — | 16/24 | 3854 | 1× | none | — | — |
+| `nemotron-3-nano:4b` | 2.8 GB | 6/24 | 380 | 1× | fabricated decision | GPU | 59 s / 3.1 GB |
+| **`qwen3.5:9b`** | 6.6 GB | **15/24** | 1699 | 1× | none | **GPU** | **100 s / 6.7 GB** |
+| `qwen3:14b` | 9.3 GB | 13/24 | 2337 | 1× | none | **CPU-spill** | 626 s / 10 GB |
+
+(Coverage here is scored against 24 topic *groups* on this meeting, so the
+numbers are internally comparable but not identical to the /28 scale in the
+Nemotron section above; the relative ordering is the point.)
+
+- **`qwen3.5:9b` is the clear winner.** It reaches near-baseline coverage
+  (15/24 vs 16/24) — capturing the whole meeting including the middle segment
+  that *every* Nemotron config dropped — with correct 5-section format, no
+  looping, and no hallucination, while fitting the GPU fully at 6.7 GB and
+  running in 100 s. The limiter for the floor was model *capacity*; 9B clears
+  the bar where 4B does not.
+- **`qwen3:14b` does not fit and is not better.** At 32k context Ollama reported
+  `26%/74% CPU/GPU` (needs ~14 GB), so it **spilled to CPU** — 626 s (6× slower)
+  for *lower* coverage than 9B (13/24). A floor that takes >10 min when the
+  network is down is barely usable; 14B is the wrong choice on a 12 GB card.
+- **This makes the Nemotron floor a regression for large meetings.**
+  `qwen3.5:9b` is the *prior* default that `nemotron-3-nano:4b` replaced. On
+  short meetings the 4B is fine and faster; on a dense all-hands it drops ~⅔ of
+  the content. The floor's default should therefore be **`qwen3.5:9b`** on a
+  12 GB host — set via `MILLET_OLLAMA_MODEL=qwen3.5:9b`. Nemotron `:4b` stays a
+  valid choice only where VRAM is tighter than 6.6 GB or speed matters more than
+  completeness.
+
+**Action taken (saray, RTX 5070):** `MILLET_OLLAMA_MODEL` switched from
+`nemotron-3-nano:4b` to `qwen3.5:9b`.
+
+---
+
 ## Appendix: Model-Specific Notes
 
 ### qwen3.8:27b (recommended local model, 2026-08-15)
