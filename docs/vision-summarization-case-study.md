@@ -139,6 +139,11 @@ quality:
    hand-maintained allowlist (`millet/summarize.py:143`), not a catalog read.
    Frames are dropped with a warning for any model not on it, so a fallback
    degrades a vision run to text-only instead of failing it.
+   *Update 2026-10-06:* DeepSeek's vision endpoint now works (10 synthetic
+   880×1920 frames, every on-screen code read correctly, 2/2 runs), and it
+   was allowlisted as the new default in millet 0.21.6. It bills ~10k image
+   tokens where `glm-5-3-flash` billed ~22k for the same frames, so it
+   likely downscales harder; this case study has not been re-run on it.
 2. **Enclave attestation fails intermittently.** Malformed SEV attestation
    reports were observed at roughly 25% (9 of 12 plain-text attempts
    succeeded). These fail *before* generation, so they are cheap to retry, and

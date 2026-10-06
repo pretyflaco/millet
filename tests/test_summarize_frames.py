@@ -10,10 +10,11 @@ Two invariants drive most of these tests:
    unreadable file, a model that can't see, or a fallback to a text-only
    backend must all degrade to the previous text-only behaviour.
 2. **The vision allowlist is not the vendor's `multimodal` flag.**
-   Tinfoil advertises `multimodal: true` for deepseek-v4-1-flash, but its
-   vision endpoint answers 502 on every request (verified 2026-09-12).
-   Since that model is our *sibling fallback*, trusting the flag would
-   turn a drained primary pool into a hard failure.
+   Tinfoil advertised `multimodal: true` for deepseek-v4-1-flash while its
+   vision endpoint answered 502 on every request (2026-09-12).  It was
+   only allowlisted (as the new default, 0.21.6) after vision was
+   re-verified live on 2026-10-06.  The sibling fallback (glm-5-3) cannot
+   see at all, so a drained primary pool must degrade to text-only.
 """
 from __future__ import annotations
 
@@ -46,12 +47,18 @@ class TestVisionAllowlist:
         assert model_supports_vision(sm.DEFAULT_TINFOIL_MODEL)
 
     def test_sibling_fallback_is_excluded(self):
-        """deepseek-v4-1-flash claims multimodal but 502s on every image."""
+        """glm-5-3 is text-only (catalog multimodal: false)."""
         assert not model_supports_vision(sm.DEFAULT_TINFOIL_FALLBACK_MODEL)
 
     def test_tee_suffix_still_matches(self):
         # MeetingSummary.model carries a " (TEE)" suffix.
+        assert model_supports_vision("deepseek-v4-1-flash (TEE)")
         assert model_supports_vision("glm-5-3-flash (TEE)")
+
+    def test_glm_flash_prefix_does_not_admit_full_glm(self):
+        # Prefix matching must not let "glm-5-3" ride on "glm-5-3-flash".
+        assert model_supports_vision("glm-5-3-flash")
+        assert not model_supports_vision("glm-5-3 (TEE)")
 
     @pytest.mark.parametrize("model", ["glm-5-3", "qwen3.8:27b", "", None])
     def test_non_vision_models(self, model):
@@ -260,7 +267,7 @@ class TestSiblingFallbackDropsFrames:
                 model = kwargs["model"]
                 user = next(m["content"] for m in kwargs["messages"] if m["role"] == "user")
                 seen.append((model, user))
-                if model == "glm-5-3-flash":
+                if model == sm.DEFAULT_TINFOIL_MODEL:
                     raise RuntimeError(
                         "Error code: 503 - The engine is currently overloaded"
                     )
@@ -282,10 +289,10 @@ class TestSiblingFallbackDropsFrames:
         monkeypatch.setattr(_t, "sleep", lambda *a, **k: None)
 
         frames = [_png(tmp_path / "cue_0.png")]
-        cfg = SummaryConfig(backend="tinfoil", model="glm-5-3-flash", frames=frames)
+        cfg = SummaryConfig(backend="tinfoil", model=sm.DEFAULT_TINFOIL_MODEL, frames=frames)
         result = sm._summarize_tinfoil("sys", "user text", cfg)
 
-        primary = [u for m, u in seen if m == "glm-5-3-flash"]
+        primary = [u for m, u in seen if m == sm.DEFAULT_TINFOIL_MODEL]
         sibling = [u for m, u in seen if m == sm.DEFAULT_TINFOIL_FALLBACK_MODEL]
         assert all(isinstance(u, list) for u in primary)   # primary saw images
         assert sibling and all(u == "user text" for u in sibling)  # sibling did not

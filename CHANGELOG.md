@@ -1,5 +1,59 @@
 # Changelog
 
+## v0.21.6 — TEE default → DeepSeek V4.1 Flash (Tinfoil deprecates GLM-5.3 Flash)
+
+Tinfoil announced on 2026-10-06 that `glm-5-3-flash` — the default summary
+model since 0.18.1 — is deprecated **on 2026-10-09**, to shift capacity to
+`deepseek-v4-1-flash` and `glm-5-3`.  Unlike `glm-5-2`'s silent retirement,
+this one came with notice; this release lands before the cutoff.
+
+### Changed
+
+* **`DEFAULT_TINFOIL_MODEL` → `deepseek-v4-1-flash`.**  It was the
+  runner-up in the grounded TEE evaluation
+  (`docs/tee-summarization-evaluation.md`), so this is a switch on existing
+  evidence, not a new bet:
+
+  | | `glm-5-3-flash` (old) | `deepseek-v4-1-flash` (new) |
+  |---|---|---|
+  | precision | 98.3 / 98.7% | 98.2 / 98.6% |
+  | recall | 91.2 / 94.2% | 87.2 / 89.8% |
+  | hallucination | 0.1 / 0.2% | 0.3 / 0.1% |
+  | owner attribution | 94.6 / 95.5% | 90.6 / 93.4% |
+  | latency median / max | 111 s / 353 s | 88 s / 115 s |
+  | gate vs Sonnet 4.6 | 16/16 | 15/16 (TR recall −2.1 pp, one judge) |
+
+  Expect slightly less topic coverage (recall gap is mostly *topics*,
+  87 vs 94; actions/decisions are within ~1 pp) and steadier latency.
+  Cost rises from ~$0.02 to ~$0.03 per meeting.
+* **`DEFAULT_TINFOIL_FALLBACK_MODEL` → `glm-5-3`** (was
+  `deepseek-v4-1-flash`).  The sibling must stay a different family from
+  the primary.  `glm-5-3` is text-only, ~9× the cost and ~3× slower, which
+  is acceptable on a path that only runs when the primary pool is down; a
+  frames run that lands on it degrades to text-only, never fails.
+* **`deepseek-v4-1-flash` added to `VISION_MODELS`.**  It was excluded in
+  0.20.0 because its vision endpoint answered 502 on every request
+  (2026-09-12).  Re-verified 2026-10-06 through the attested SDK: 10
+  synthetic 880×1920 frames, every on-screen code read correctly in 2/2
+  runs (5–7 s).  It bills ~10k image tokens where `glm-5-3-flash` billed
+  ~22k for the same frames, so it likely downscales harder — small UI text
+  in real screen recordings is not yet verified.  `glm-5-3-flash` stays on
+  the allowlist for anyone pinning it until Tinfoil removes it.
+* The three deprecated presets resolve to the new default; GUI label,
+  README, REQUIREMENTS updated.
+
+### Operator note
+
+A `MILLET_SUMMARY_MODEL=glm-5-3-flash` pin in a deployment's environment
+overrides this default and will start failing on 2026-10-09 — remove it.
+
+### Tests
+
+Vision-allowlist and sibling-fallback tests now use the constants instead
+of the literal `glm-5-3-flash`, the env-override test uses a model distinct
+from the default (it had become a tautology), and a new test pins that the
+`glm-5-3-flash` prefix cannot admit text-only `glm-5-3` to the vision path.
+
 ## v0.21.5 — voiceprints learn only from real speech; CROSSTALK beats a voiceprint match
 
 Incident 2026-09-30 (vezir, blink team): a profile named "Pattern" (a

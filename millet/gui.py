@@ -285,7 +285,7 @@ class MeetRecorderWindow(Gtk.Window):
         # so there is nothing to trade off and only the default is offered.
         # Legacy ids still resolve (see SUMMARY_PRESETS) for saved configs.
         _PRESET_OPTIONS = [
-            ("confidential", "Confidential \u2014 GLM-5.3 Flash (TEE)"),
+            ("confidential", "Confidential \u2014 DeepSeek V4.1 Flash (TEE)"),
         ]
         for pid, plabel in _PRESET_OPTIONS:
             self._preset_combo.append(pid, plabel)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "millet-pipeline"
-version = "0.21.5"
+version = "0.21.6"
 description = "Meeting transcription pipeline (diarization, AI summaries, PDF output) under the vezir ecosystem.  Builds on millet-record for capture.  Named after the Ottoman millet system.  Successor to meetscribe-offline."
 readme = "README.md"
 requires-python = ">=3.10"

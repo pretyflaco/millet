@@ -34,7 +34,7 @@ before giving up.
 Configuration precedence (highest to lowest):
   1. Explicit keyword arguments / CLI flags (--summary-backend, --summary-model)
   2. Environment variables (MILLET_SUMMARY_BACKEND, MILLET_SUMMARY_MODEL)
-  3. Hardcoded defaults (tinfoil / glm-5-3-flash)
+  3. Hardcoded defaults (tinfoil / deepseek-v4-1-flash)
 """
 
 from __future__ import annotations
@@ -77,13 +77,20 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_TIMEOUT = 600  # 10 minutes max
 
 # Tinfoil TEE defaults (hardware-enforced prompt privacy)
-DEFAULT_TINFOIL_MODEL = "glm-5-3-flash"
+# Tinfoil deprecated glm-5-3-flash on 2026-10-09 (announced 2026-10-06).
+# deepseek-v4-1-flash was the runner-up in the grounded TEE evaluation
+# (docs/tee-summarization-evaluation.md): equal precision, ~4 pp lower
+# recall, faster and far steadier latency (max 115 s vs 353 s).
+DEFAULT_TINFOIL_MODEL = "deepseek-v4-1-flash"
 # Sibling TEE model tried when the primary model's enclave pool is
-# unavailable.  Deliberately a different model family (DeepSeek, not GLM) so
-# a drained GLM pool — exactly what retired glm-5-2 — does not take out both.
+# unavailable.  Deliberately a different model family (GLM, not DeepSeek) so
+# a drained pool of one family — exactly what retired glm-5-2 — does not take
+# out both.  glm-5-3 is text-only (a frames run degrades to text-only on the
+# sibling, never fails), ~9x the cost and ~3x slower, which is acceptable
+# for a path that only runs when the primary is down.
 # This is NOT a privacy fallback: both models run inside the TEE, so the
 # `confidential` contract holds.  It is never silent (see fallback_used).
-DEFAULT_TINFOIL_FALLBACK_MODEL = "deepseek-v4-1-flash"
+DEFAULT_TINFOIL_FALLBACK_MODEL = "glm-5-3"
 TINFOIL_API_KEY_ENV = "TINFOIL_API_KEY"
 _TINFOIL_KEY_FILE = Path.home() / "models" / "tinfoil" / "tinfoil.txt"
 
@@ -269,10 +276,13 @@ def verify_model(backend: str, model: str, *, timeout: int = 10) -> str | None:
 
 # Models that accept image input.  Deliberately an allowlist of models we
 # have actually exercised, NOT Tinfoil's advertised `multimodal` flag: that
-# flag is set for deepseek-v4-1-flash, whose vision endpoint answers 502 on
-# every request (verified 2026-09-12).  Trusting the catalog would turn a
-# frames run into a hard failure on the sibling fallback.
-VISION_MODELS = ("glm-5-3-flash", "qwen3-vl", "e2ee-qwen3-vl")
+# flag was set for deepseek-v4-1-flash while its vision endpoint answered 502
+# on every request (2026-09-12).  Re-verified working 2026-10-06 (10 frames
+# at 880x1920, every on-screen code read correctly) before it was added here.
+# Note it bills ~half the image tokens glm-5-3-flash did, so it likely
+# downscales harder; small UI text is untested.  glm-5-3-flash stays listed
+# for anyone pinning it via MILLET_SUMMARY_MODEL until Tinfoil removes it.
+VISION_MODELS = ("deepseek-v4-1-flash", "glm-5-3-flash", "qwen3-vl", "e2ee-qwen3-vl")
 
 # Hard endpoint limit, not a budget choice: the attested vision endpoints
 # reject a request carrying more than 10 images outright — verified live
@@ -328,7 +338,7 @@ def backend_supports_vision(backend: str) -> bool:
     text-only summary on fallback — it stays on a vision tier or fails loud.
     """
     if backend == "tinfoil":
-        return True  # primary vision tier (glm-5-3-flash)
+        return True  # primary vision tier (deepseek-v4-1-flash)
     if backend in ATTESTED_BACKENDS:
         return ATTESTED_BACKENDS[backend]["vision_model"] is not None
     return False  # ollama local tier is text-only (mmproj vision unsupported)

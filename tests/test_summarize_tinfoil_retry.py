@@ -323,7 +323,7 @@ def test_persistent_503_falls_back_to_sibling_tee_model(monkeypatch):
     class _Completions:
         def create(self, **kwargs):
             seen.append(kwargs["model"])
-            if kwargs["model"] == "glm-5-3-flash":
+            if kwargs["model"] == sm.DEFAULT_TINFOIL_MODEL:
                 raise RuntimeError(_OVERLOADED)
             return _Resp()
 
@@ -336,11 +336,11 @@ def test_persistent_503_falls_back_to_sibling_tee_model(monkeypatch):
 
     fake.TinfoilAI = FakeAI
 
-    cfg = SummaryConfig(backend="tinfoil", model="glm-5-3-flash")
+    cfg = SummaryConfig(backend="tinfoil", model=sm.DEFAULT_TINFOIL_MODEL)
     result = sm._summarize_tinfoil("sys", "user", cfg)
 
     # Primary exhausted its retry budget, then the sibling was tried.
-    assert seen.count("glm-5-3-flash") == sm._TINFOIL_MAX_ATTEMPTS
+    assert seen.count(sm.DEFAULT_TINFOIL_MODEL) == sm._TINFOIL_MAX_ATTEMPTS
     assert sm.DEFAULT_TINFOIL_FALLBACK_MODEL in seen
     # Still a TEE model, and the switch is recorded — never silent.
     assert result.backend == "tinfoil"

@@ -35,10 +35,14 @@ longer a privacy/quality tradeoff to configure.
 
 ## Status
 
-Alpha (**0.20.1**).  Full history in [CHANGELOG.md](CHANGELOG.md).
+Alpha (**0.21.6**).  Full history in [CHANGELOG.md](CHANGELOG.md).
 
 Recent highlights:
 
+- **0.21.6** -- TEE default moved to `deepseek-v4-1-flash` (Tinfoil
+  deprecated `glm-5-3-flash` on 2026-10-09); sibling fallback is now
+  `glm-5-3`.  DeepSeek was the runner-up in the TEE evaluation and its
+  vision endpoint was re-verified before it took over screen recordings.
 - **0.20.1** -- the default backend's SDK (`tinfoil`) is a base
   dependency, not an optional extra.  A plain `pip install
   millet-pipeline` can now summarize on its own default path.
@@ -56,7 +60,7 @@ Two write-ups, deliberately labelled by how much they actually support:
 
 | Question | Evidence | Result |
 |---|---|---|
-| Can an in-TEE model replace Sonnet 4.6 as the default summarizer? | **Evaluation** -- 10 meetings (EN/DE/TR), blind relabeling, two independent in-TEE judges, 80 verdicts, mechanical 16-check bar | **Yes.** `glm-5-3-flash` beat Sonnet on precision *and* recall under both judges in every language; 16/16. [Full evaluation](docs/tee-summarization-evaluation.md) |
+| Can an in-TEE model replace Sonnet 4.6 as the default summarizer? | **Evaluation** -- 10 meetings (EN/DE/TR), blind relabeling, two independent in-TEE judges, 80 verdicts, mechanical 16-check bar | **Yes.** `glm-5-3-flash` beat Sonnet on precision *and* recall under both judges in every language; 16/16. Runner-up `deepseek-v4-1-flash` (the default since 0.21.6, after Tinfoil deprecated GLM-5.3 Flash) matched its precision at ~4 pp lower recall; 15/16. [Full evaluation](docs/tee-summarization-evaluation.md) |
 | Does showing the model the screen surface defects the transcript cannot? | **Case study, n = 1** -- one session, 1 text-only + 3 vision runs | Screen-only defects appear that the text-only run surfaced none of; 2 of 5 reproduced in 3/3 runs. Not a general claim. [Case study](docs/vision-summarization-case-study.md) |
 
 The first is worth quoting; the second is worth reading before believing.
@@ -101,7 +105,7 @@ including browser-based meetings and standalone desktop clients.
 - **Speaker diarization** -- pyannote-audio identifies who said what, with
   automatic YOU/REMOTE labeling from the dual-channel signal
 - **AI meeting summaries, private by default** -- a hardware-attested
-  Tinfoil TEE (`glm-5-3-flash`, the default) or a fully local Ollama
+  Tinfoil TEE (`deepseek-v4-1-flash`, the default) or a fully local Ollama
   model.  Both are private, so the `tinfoil -> ollama` fallback chain can
   degrade *quality* but never *confidentiality*
 - **Summarize from the screen** -- for a narrated screen recording, the
@@ -293,8 +297,9 @@ Options:
 - `--summary-frames` / `--no-summary-frames` -- send the session's cue frames
   (`attachments/cue_HH-MM-SS.png`) to the model alongside the transcript, so
   the summary can describe what is on screen.  Requires a vision-capable
-  model: only `glm-5-3-flash` is on the allowlist, and frames are dropped
-  with a warning for anything else (up to `MAX_FRAMES = 45`)
+  model: `deepseek-v4-1-flash` (the default) and `glm-5-3-flash` are on the
+  allowlist, and frames are dropped with a warning for anything else (up to
+  `MAX_FRAMES = 10`, the endpoint's per-request image cap)
 - `--skip-alignment` -- skip word-level alignment (useful if alignment model is unavailable)
 - `--mixdown mono|dual|dual-diarize` -- stereo mixdown mode (default:
   `dual-diarize`). See *Dual-channel modes* below.
@@ -538,7 +543,7 @@ millet supports two backends, both private, with automatic fallback:
 
 | Backend | Setup | Cost | Quality | Privacy |
 |---------|-------|------|---------|---------|
-| `tinfoil` (default) | `pip install 'millet-pipeline[tee]'`, set `TINFOIL_API_KEY` (or drop a key file at `~/models/tinfoil/tinfoil.txt`) | ~$0.02/meeting | Excellent (GLM-5.3 Flash) | **Hardware-attested TEE — prompts not visible to provider/operator** |
+| `tinfoil` (default) | `pip install 'millet-pipeline[tee]'`, set `TINFOIL_API_KEY` (or drop a key file at `~/models/tinfoil/tinfoil.txt`) | ~$0.03/meeting | Excellent (DeepSeek V4.1 Flash) | **Hardware-attested TEE — prompts not visible to provider/operator** |
 | `ollama` | `ollama serve` + `ollama pull qwen3.5:9b` | Free | Good | Fully local |
 
 `claudemax`, `openrouter` and the generic `openai` backend were **removed in
@@ -552,10 +557,11 @@ The `tinfoil` backend runs inference inside a hardware-attested TEE (AMD
 SEV-SNP or Intel TDX, depending on the model).  The model provider can't
 see the prompts, the cloud operator can't see the prompts, and the
 integrity is checked against an attestation report on every request.
-~$0.02 per meeting; latency ~60–90 s for a 30–60 min recording on
-GLM-5.3 Flash.  Cost scales with the model's reasoning tokens, not just
-transcript length — the non-Flash GLM-5.3 spends ~9× more for no
-measurable gain in summary coverage (see CHANGELOG v0.18.1).
+~$0.03 per meeting; median latency ~90 s (max ~115 s in the evaluation)
+on DeepSeek V4.1 Flash.  Cost scales with the model's reasoning tokens,
+not just transcript length — the non-Flash GLM-5.3 (now only the sibling
+fallback) spends ~9× more for no measurable gain in summary coverage (see
+CHANGELOG v0.18.1).
 
 ```bash
 # Default: TEE. Nothing to configure beyond the API key.
@@ -600,9 +606,9 @@ don't break.
 
 | Preset | Resolves to | Status |
 |---|---|---|
-| `confidential` | `tinfoil` / `glm-5-3-flash` | Deprecated alias (the default) |
-| `high-quality` | `tinfoil` / `glm-5-3-flash` | Deprecated alias |
-| `alternative` | `tinfoil` / `glm-5-3-flash` | Deprecated alias |
+| `confidential` | `tinfoil` / `deepseek-v4-1-flash` | Deprecated alias (the default) |
+| `high-quality` | `tinfoil` / `deepseek-v4-1-flash` | Deprecated alias |
+| `alternative` | `tinfoil` / `deepseek-v4-1-flash` | Deprecated alias |
 
 ```bash
 # Quick check of which preset is in effect

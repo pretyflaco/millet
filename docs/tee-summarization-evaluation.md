@@ -11,6 +11,11 @@ Scope: does a hardware-attested TEE model match or beat `claude-sonnet-4-6`
 > `gpt-oss-120b` failed all 16 checks.
 >
 > Metrics only. No transcript or summary content is reproduced here.
+>
+> **Update 2026-10-06 (millet 0.21.6):** Tinfoil deprecated `glm-5-3-flash`
+> effective 2026-10-09, so the runner-up `deepseek-v4-1-flash` is now the
+> default and `glm-5-3` the sibling fallback. No new evaluation was run; the
+> numbers below are the basis for the switch.
 
 ---
 

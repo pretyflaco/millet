@@ -120,8 +120,10 @@ class TestStaleOllamaModelGuard:
 
     def test_plain_model_name_still_honored_for_tee(self, monkeypatch):
         monkeypatch.setattr(sm, "_WARNED_MODELS", set())
-        monkeypatch.setenv("MILLET_SUMMARY_MODEL", "deepseek-v4-1-flash")
-        assert _resolve_model("tinfoil") == "deepseek-v4-1-flash"
+        # Must differ from DEFAULT_TINFOIL_MODEL or the test proves nothing.
+        assert DEFAULT_TINFOIL_MODEL != "kimi-k3"
+        monkeypatch.setenv("MILLET_SUMMARY_MODEL", "kimi-k3")
+        assert _resolve_model("tinfoil") == "kimi-k3"
 
     def test_env_model_does_not_leak_across_backends(self, monkeypatch):
         monkeypatch.setenv("MILLET_SUMMARY_MODEL", "some-ollama-only:9b")
