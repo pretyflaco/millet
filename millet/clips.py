@@ -67,7 +67,22 @@ def is_clips_template(template: str | None) -> bool:
 
 
 def parse_timestamp(value: Any) -> float | None:
-    """Parse ``HH:MM:SS``, ``MM:SS``, ``[HH:MM:SS]`` or plain seconds."""
+    """Parse ``HH:MM:SS``, ``MM:SS``, ``[HH:MM:SS]`` or plain seconds.
+
+    Returns ``None`` for anything that is not a finite, non-negative time —
+    including values that overflow a float: JSON integers are arbitrary
+    precision (``1`` followed by 400 zeros parses fine), and so is a huge
+    hour field inside an ``HH:MM:SS`` string.
+    """
+    try:
+        return _parse_timestamp(value)
+    except (OverflowError, ValueError):
+        # OverflowError: int too large for a float.  ValueError: an int
+        # string beyond Python's int_max_str_digits limit (3.11+).
+        return None
+
+
+def _parse_timestamp(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -92,7 +107,8 @@ def parse_timestamp(value: Any) -> float | None:
     sec = float(m.group(3))
     if mn >= 60 or sec >= 60:
         return None
-    return h * 3600 + mn * 60 + sec
+    total = h * 3600 + mn * 60 + sec
+    return total if math.isfinite(total) else None
 
 
 def fmt_ts(seconds: float) -> str:
@@ -174,7 +190,7 @@ def _coerce_score(v: Any) -> int | None:
         return None
     try:
         f = float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # Overflow: a huge JSON int
         return None
     if not math.isfinite(f):  # round(inf) raises OverflowError
         return None
@@ -182,18 +198,24 @@ def _coerce_score(v: Any) -> int | None:
 
 
 _MAX_ECHO_CHARS = 200
+# Integers are always finite and JSON-serializable, but a model can emit an
+# arbitrarily long one; echo only what fits in 64 bits.
+_MAX_ECHO_INT = 2**63 - 1
 
 
 def _json_safe(value: Any, depth: int = 0) -> Any:
     """Echo model-supplied data into ``requested``/``dropped`` safely.
 
-    Non-finite numbers become ``None`` (``json.dumps`` would otherwise emit
-    the non-standard ``Infinity``/``NaN``), long strings are truncated, and
-    anything nested or exotic becomes a short ``repr``.
+    Non-finite floats and integers beyond 64 bits become ``None``
+    (``json.dumps`` would otherwise emit the non-standard ``Infinity``/``NaN``,
+    and ``math.isfinite`` on a huge int raises), long strings are truncated,
+    and anything nested or exotic becomes a short ``repr``.
     """
     if value is None or isinstance(value, bool):
         return value
-    if isinstance(value, (int, float)):
+    if isinstance(value, int):
+        return value if abs(value) <= _MAX_ECHO_INT else None
+    if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, str):
         return value[:_MAX_ECHO_CHARS]

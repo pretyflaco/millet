@@ -606,3 +606,53 @@ def test_relabel_unrelated_map_leaves_clips_untouched(tmp_path):
     files = apply_labels(sdir, {"NOBODY": "x"}, regenerate_summary=False)
     assert "clips" not in files
     assert (sdir / "01ABC.clips.json").read_text() == before
+
+
+class TestHugeIntegers:
+    """Re-review: JSON integers are arbitrary precision; float() overflows."""
+
+    BIG = json.loads("1" + "0" * 400)
+
+    def _strict_doc(self, tmp_path, data):
+        return TestNonFinite._strict_doc(self, tmp_path, data)
+
+    def test_parse_timestamp_huge_values(self):
+        assert parse_timestamp(self.BIG) is None
+        assert parse_timestamp(-self.BIG) is None
+        assert parse_timestamp("1" + "0" * 400 + ":00:00") is None   # huge hour field
+        assert parse_timestamp("9" * 5000 + ":00:00") is None        # > int_max_str_digits
+        assert parse_timestamp("1" + "0" * 400) is None               # float("1e400") = inf
+
+    @pytest.mark.parametrize("field", ["start", "end"])
+    def test_huge_int_timestamp_dropped(self, tmp_path, field):
+        clip = _clip(_segs(), 2, 5)
+        clip[field] = self.BIG
+        doc = self._strict_doc(tmp_path, {"clips": [clip]})
+        assert doc["clips"] == []
+        assert doc["dropped"][0]["reason"] == "unparseable start/end timestamp"
+        assert doc["dropped"][0]["requested"][field] is None
+
+    def test_huge_hour_string_dropped(self, tmp_path):
+        clip = _clip(_segs(), 2, 5)
+        clip["start"] = "1" + "0" * 400 + ":00:00"
+        doc = self._strict_doc(tmp_path, {"clips": [clip]})
+        assert doc["clips"] == [] and "unparseable" in doc["dropped"][0]["reason"]
+        assert len(doc["dropped"][0]["requested"]["start"]) == clips._MAX_ECHO_CHARS
+
+    def test_huge_int_score_is_null_and_clip_kept(self, tmp_path):
+        segs = _segs()
+        doc = self._strict_doc(tmp_path, {"clips": [_clip(segs, 2, 5, score=self.BIG)]})
+        assert len(doc["clips"]) == 1 and doc["clips"][0]["score"] is None
+
+    def test_huge_int_entries_echo_as_null(self, tmp_path):
+        doc = self._strict_doc(tmp_path, {"clips": [
+            self.BIG, [self.BIG, 42], {"kind": self.BIG},
+        ]})
+        assert doc["dropped"][0]["requested"] is None
+        assert doc["dropped"][1]["requested"] == [None, 42]
+        assert "unknown kind None" in doc["dropped"][2]["reason"]
+
+    def test_ordinary_ints_echo_unchanged(self):
+        assert clips._json_safe(42) == 42
+        assert clips._json_safe(-(2**63 - 1)) == -(2**63 - 1)
+        assert clips._json_safe(2**63) is None

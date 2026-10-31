@@ -69,8 +69,13 @@ MCP server exposes it), so the machine-readable half is the point.
   infinite score used to raise `OverflowError`).  Model-supplied values
   echoed into `requested`/`dropped` are sanitized: non-finite becomes
   `null`, and long or nested values are truncated.  The file is serialized
-  with `allow_nan=False`, so it is always strict JSON.
-* Tests: `tests/test_clips.py` (74), added to the CI subset.  Every changed
+  with `allow_nan=False`, so it is always strict JSON.  Arbitrary-precision
+  JSON integers are covered too: `1` followed by 400 zeros is a valid JSON
+  number, and so is a string timestamp with a huge hour field.  As a
+  timestamp, either one is dropped as unparseable; as a score, it becomes
+  `null`; when echoed, it becomes `null`.  Before, `float()` raised
+  `OverflowError` and aborted the clips file.
+* Tests: `tests/test_clips.py` (81), added to the CI subset.  Every changed
   line and branch in `clips.py`, `cli/_helpers.py`, `label.py` and `sync.py`
   is covered.
 
