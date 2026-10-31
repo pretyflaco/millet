@@ -919,6 +919,13 @@ def _collect_files(session_dir: Path) -> list[tuple[Path, str]]:
             dest_name = "transcript.pdf"
         elif f.suffix == ".srt":
             dest_name = "transcript.srt"
+        elif f.suffix == ".json" and ".clips." in f.name:
+            # video-clipping cut list: <base>.clips[.<lang>].json ->
+            # clips[.<lang>].json.  Must precede the transcript mapping:
+            # "<base>.clips.json" sorts before "<base>.json" and would
+            # otherwise claim transcript.json.
+            tail = f.name[: -len(".json")].split(".clips", 1)[1]  # "" or ".de"
+            dest_name = f"clips{tail}.json"
         elif f.suffix == ".json":
             dest_name = "transcript.json"
         else:

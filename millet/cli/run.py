@@ -88,7 +88,7 @@ from ._helpers import (
     "--summary-template",
     type=str,
     default=None,
-    help="Summary prompt template name (e.g. 'iteration-plan'). Uses "
+    help="Summary prompt template name ('iteration-plan' or 'video-clipping'). Uses "
     "summarize_<template>_{system,user}.md from millet/prompts (dashes in "
     "the name become underscores) and writes "
     "<base>.<template>.md instead of <base>.summary.md. Also configurable "

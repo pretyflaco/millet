@@ -92,6 +92,7 @@ jobs:
             tests/test_frontmatter.py \
             tests/test_pdf.py \
             tests/test_label.py \
+            tests/test_clips.py \
             tests/test_ingest.py \
             tests/test_ssl_cert_injection.py \
             tests/test_sync_core.py \

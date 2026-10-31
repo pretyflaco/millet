@@ -1,6 +1,7 @@
 """Shared helpers for the millet CLI command modules."""
 from __future__ import annotations
 
+import json
 import signal
 import time
 
@@ -104,6 +105,8 @@ def _generate_summary(
         path = result.save(out_dir, basename, frontmatter_context=fm_ctx, artifact=artifact)
         files[artifact] = path
         click.echo(f"  Summary generated in {result.elapsed_seconds:.1f}s")
+        _write_clips_if_template(result, transcript, out_dir, basename, files,
+                                 summary_template)
         return result
     except Exception as exc:
         click.echo(f"  Summary failed: {exc}", err=True)
@@ -115,6 +118,32 @@ def _generate_summary(
             # Re-raise so `meet transcribe` exits non-zero.
             raise
         return None
+
+
+def _write_clips_if_template(
+    summary_result, transcript, out_dir, basename, files, summary_template,
+    lang_suffix=None,
+):
+    """Write ``<basename>.clips.json`` for a ``video-clipping`` summary.
+
+    A failure here never fails the summary: the Markdown clip list already
+    exists, and the clips file can be rebuilt by a summary retry.
+    """
+    from millet.clips import is_clips_template, write_clips
+
+    if not is_clips_template(summary_template):
+        return None
+    try:
+        path = write_clips(summary_result, transcript, out_dir, basename,
+                           lang_suffix=lang_suffix)
+    except Exception as exc:
+        click.echo(f"  Clip extraction failed: {exc}", err=True)
+        return None
+    doc_clips = json.loads(path.read_text(encoding="utf-8"))
+    kept, dropped = len(doc_clips["clips"]), len(doc_clips["dropped"])
+    click.echo(f"  Clips: {kept} kept, {dropped} dropped -> {path.name}")
+    files["clips"] = path
+    return path
 
 
 def _generate_pdf(transcript, out_dir, basename, summary_result, files):

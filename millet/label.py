@@ -72,6 +72,8 @@ def _find_session_files(session_dir: Path) -> dict[str, Path]:
             or ".translation." in p.name
             or ".summary." in p.name
             or ".autoid." in p.name
+            or ".clips." in p.name
+            or ".meta." in p.name
         ):
             continue
         json_candidates.append(p)
@@ -636,6 +638,19 @@ def apply_labels(
                     artifact=artifact,
                 )
                 result_files[artifact] = path
+                from millet.clips import is_clips_template, write_clips
+
+                if is_clips_template(summary_template):
+                    # Clip boundaries come from the FULL transcript
+                    # (CROSSTALK included): the cut must match the video.
+                    try:
+                        result_files["clips"] = write_clips(
+                            summary_result, transcript, session_dir, basename,
+                            lang_suffix=lang_suffix,
+                        )
+                        _log(f"Clips written: {result_files['clips'].name}")
+                    except Exception as exc:
+                        _log(f"Clip extraction failed: {exc}")
                 if lang_suffix:
                     _log(
                         f"Additional '{lang_suffix}' summary generated in "
@@ -752,6 +767,23 @@ def apply_labels(
             markdown=body, model=orig_model, elapsed_seconds=orig_elapsed,
             backend=orig_backend,
         )
+
+    if not regenerate_summary and label_map:
+        # video-clipping: clip boundaries don't move on a relabel, only the
+        # speaker names inside each clip do.
+        from millet.clips import relabel_clips_file
+
+        clips_files = sorted(
+            p for p in session_dir.iterdir()
+            if p.is_file() and p.name.startswith(f"{basename}.clips.")
+            and p.name.endswith(".json")
+        )
+        for clips_file in clips_files:
+            try:
+                if relabel_clips_file(clips_file, label_map):
+                    result_files.setdefault("clips", clips_file)
+            except Exception as exc:
+                _log(f"Clip relabel failed for {clips_file.name}: {exc}")
 
     # ── PDF ──
     _log("Regenerating PDF...")

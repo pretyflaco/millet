@@ -1,5 +1,58 @@
 # Changelog
 
+## v0.23.0 — feat: `video-clipping` summary template + `clips.json` cut list
+
+A third summary template next to the meeting summary and `iteration-plan`:
+upload a video, and the model proposes the moments worth cutting out as
+stand-alone clips.  The output is meant for an agent with ffmpeg (vezir's
+MCP server exposes it), so the machine-readable half is the point.
+
+* **`millet/prompts/summarize_video_clipping_{system,user}.md`** — two clip
+  kinds, `short` (15-60 s, vertical short-form) and `long` (60-180 s,
+  highlight segments), selected for being self-contained, hook-first and
+  valuable.  Markdown sections `## Overview` / `## Short Clips` /
+  `## Long Clips`; the fenced JSON block keeps the standard keys
+  (`participants`, `topics`, empty `action_items`/`decisions`) so
+  frontmatter validation and indexing are unchanged, and adds
+  `clips: [{kind, start, end, title, hook, reason, score, tags}]`.
+* **`millet/clips.py`** — the LLM's timestamps are cues, not cut points:
+  they are floored to the second and a model can mis-copy or invent one.
+  `build_clips` snaps every boundary onto a real transcript segment
+  (exact-copy match, then the containing segment, then the nearest boundary
+  within 5 s), pads 0.25 s / 0.5 s into the surrounding silence but never
+  into a neighbour's speech, clamps to the recording, enforces each kind's
+  window (short 10-75 s, long 45-240 s after snapping), and keeps the
+  higher-scored clip when two of the same kind overlap (a short inside a
+  long is fine).  Capped at 15 short / 8 long.  **Nothing is guessed**: a
+  clip that fails any check lands in `dropped` with its reason, and a model
+  that broke the JSON contract yields an empty `clips` plus `error` — so a
+  consumer can tell "nothing worth clipping" from "the model failed".
+* **`<base>.clips.json`** (`.clips.<lang>.json` for an additional-language
+  summary), written after the template summary on transcribe and on
+  `label --apply-json` regeneration: per clip `id` (`short-01`…),
+  `start_s`/`end_s`/`duration_s`, `start_ts`/`end_ts`, `segments`,
+  `speakers`, verbatim `text`, `words` rebased to the clip start (for burned
+  captions), and `ffmpeg_args` (frame-accurate re-encode; `{input}` /
+  `{output}` placeholders).  Times are on the transcript timeline — a
+  caller that knows the source video's timeline offset (vezir) adds it.
+  No top-level `duration` key, so duration probes that read any `*.json`
+  can't mistake it for the transcript.  A relabel without regeneration
+  renames speakers inside the clips; boundaries never move.  A clip-file
+  failure never fails the summary.
+* **`_find_session_files`** no longer considers `.clips.` or `.meta.`
+  JSONs as transcript candidates — `<base>.clips.json` sorts before
+  `<base>.json` and would have been picked in a directory whose name
+  differs from the basename (the same latent bug applied to template
+  `.meta.json` sidecars).
+* **sync** pushes `<base>.clips[.<lang>].json` as `clips[.<lang>].json`
+  instead of letting it claim `transcript.json`.
+* Validated live on the default backend (`deepseek-v4-1-flash`, TEE) with a
+  real 30-minute recording: valid JSON, 11 clips (8 short / 3 long), none
+  dropped, every boundary snapped.  The first draft of the prompt treated
+  the 15/8 ceiling as a target and returned exactly 15/8, so the prompt now
+  scales the count to the video's length.
+* Tests: `tests/test_clips.py` (43), added to the CI subset.
+
 ## v0.22.1 — security audit validation follow-up
 
 ### Dependencies

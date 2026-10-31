@@ -113,6 +113,13 @@ including browser-based meetings and standalone desktop clients.
   alongside the transcript, so an iteration plan can report what is
   visibly wrong and not only what the narrator said aloud
   (`--summary-template iteration-plan --summary-frames`)
+- **Clip-worthy highlights from a video** -- `--summary-template
+  video-clipping` asks the model for short (15-60 s) and long (1-3 min)
+  stand-alone clips, then snaps every proposed boundary onto a real
+  transcript segment and writes `<base>.clips.json`: exact cut points,
+  verbatim text, per-word timings for captions and ready ffmpeg arguments.
+  A clip whose timestamps match no transcript line is dropped with a
+  recorded reason, never guessed
 - **Attestation footer on the PDF** -- a TEE-backed summary carries a
   quiet "Summarized in a hardware-attested TEE" footer recording the
   backend and model
@@ -292,8 +299,9 @@ Options:
 - `--summary-backend ollama` -- summary backend (`tinfoil` default, or `ollama`)
 - `--summary-model <model>` -- model for summary (default: per-backend)
 - `--summary-template <name>` -- use a named summary template instead of the
-  default meeting summary (e.g. `iteration-plan` for a narrated walkthrough
-  of a build)
+  default meeting summary: `iteration-plan` for a narrated walkthrough
+  of a build, `video-clipping` for clip-worthy highlights of a video (also
+  writes `<base>.clips.json`, the cut list)
 - `--summary-frames` / `--no-summary-frames` -- send the session's cue frames
   (`attachments/cue_HH-MM-SS.png`) to the model alongside the transcript, so
   the summary can describe what is on screen.  Requires a vision-capable

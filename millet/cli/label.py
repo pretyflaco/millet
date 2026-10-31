@@ -290,7 +290,7 @@ def _apply_json_mode(
     "--summary-template",
     type=str,
     default=None,
-    help="Summary prompt template name (e.g. 'iteration-plan') for the "
+    help="Summary prompt template name ('iteration-plan' or 'video-clipping') for the "
          "regenerated summary. Writes <base>.<template>.md instead of "
          "<base>.summary.md. Also configurable via MILLET_SUMMARY_TEMPLATE.",
 )

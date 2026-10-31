@@ -51,4 +51,4 @@ try:
         # may still be the one installed.  Honor it as a fallback.
         __version__ = _pkg_version("meetscribe-offline")
 except Exception:
-    __version__ = "0.22.1"
+    __version__ = "0.23.0"
