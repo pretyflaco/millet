@@ -491,6 +491,33 @@ def absorb_tiny_speakers(
 
 # ─── Apply labels ──────────────────────────────────────────────────────────
 
+def _write_clips_best_effort(
+    summary_result, transcript, session_dir: Path, basename: str,
+    template: str | None, lang_suffix: str | None,
+    result_files: dict, log_fn,
+) -> None:
+    """Write the ``video-clipping`` cut list; never fails the summary.
+
+    Clip boundaries come from the FULL transcript (CROSSTALK included): the
+    cut must match the video, not the filtered summary input.
+    """
+    try:
+        from millet.clips import is_clips_template, write_clips_doc
+
+        if not is_clips_template(template):
+            return
+        path, doc = write_clips_doc(
+            summary_result, transcript, session_dir, basename, lang_suffix=lang_suffix,
+        )
+        result_files["clips"] = path
+        log_fn(
+            f"Clips written: {path.name} ({len(doc['clips'])} kept, "
+            f"{len(doc['dropped'])} dropped)"
+        )
+    except Exception as exc:
+        log_fn(f"Clip extraction failed: {exc}")
+
+
 def apply_labels(
     session_dir: str | Path,
     label_map: dict[str, str],
@@ -631,26 +658,21 @@ def apply_labels(
                 from millet.frontmatter import context_from_transcript
 
                 fm_ctx = context_from_transcript(transcript, session_dir)
-                artifact = summary_template or "summary"
+                # The RESOLVED template (explicit arg > MILLET_SUMMARY_TEMPLATE,
+                # lowercased by SummaryConfig): the raw argument is None when
+                # the template comes from the environment.
+                template = summary_config.template
+                artifact = template or "summary"
                 path = summary_result.save(
                     session_dir, basename, frontmatter_context=fm_ctx,
                     lang_suffix=lang_suffix,
                     artifact=artifact,
                 )
                 result_files[artifact] = path
-                from millet.clips import is_clips_template, write_clips
-
-                if is_clips_template(summary_template):
-                    # Clip boundaries come from the FULL transcript
-                    # (CROSSTALK included): the cut must match the video.
-                    try:
-                        result_files["clips"] = write_clips(
-                            summary_result, transcript, session_dir, basename,
-                            lang_suffix=lang_suffix,
-                        )
-                        _log(f"Clips written: {result_files['clips'].name}")
-                    except Exception as exc:
-                        _log(f"Clip extraction failed: {exc}")
+                _write_clips_best_effort(
+                    summary_result, transcript, session_dir, basename,
+                    template, lang_suffix, result_files, _log,
+                )
                 if lang_suffix:
                     _log(
                         f"Additional '{lang_suffix}' summary generated in "

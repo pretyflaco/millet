@@ -51,7 +51,28 @@ MCP server exposes it), so the machine-readable half is the point.
   dropped, every boundary snapped.  The first draft of the prompt treated
   the 15/8 ceiling as a target and returned exactly 15/8, so the prompt now
   scales the count to the video's length.
-* Tests: `tests/test_clips.py` (43), added to the CI subset.
+* **The template comes from the resolved config, not the raw argument.**
+  Both the initial summary and `label --apply-json` regeneration now name
+  the output and decide on `clips.json` from `SummaryConfig.template`, which
+  takes the explicit argument first, then `MILLET_SUMMARY_TEMPLATE` (or the
+  legacy `MEETSCRIBE_SUMMARY_TEMPLATE`), and lowercases it.  Before, an
+  environment-configured `video-clipping` run produced the clip summary with
+  no cut list, and **any** environment-configured template overwrote
+  `<base>.summary.md` instead of writing `<base>.<template>.md`.  Explicit
+  `--summary-template Video-Clipping` also now names files in lowercase.
+* The clip step is best-effort end to end.  `write_clips_doc` returns the
+  document, so nothing is read back, and the whole step sits inside the
+  guard: a failure logs `Clip extraction failed` and never fails or re-raises
+  an already-saved summary, preset or not.
+* Non-finite numbers can't break the contract.  JSON accepts `1e309`
+  (infinity).  Timestamps and scores now reject non-finite values (an
+  infinite score used to raise `OverflowError`).  Model-supplied values
+  echoed into `requested`/`dropped` are sanitized: non-finite becomes
+  `null`, and long or nested values are truncated.  The file is serialized
+  with `allow_nan=False`, so it is always strict JSON.
+* Tests: `tests/test_clips.py` (74), added to the CI subset.  Every changed
+  line and branch in `clips.py`, `cli/_helpers.py`, `label.py` and `sync.py`
+  is covered.
 
 ## v0.22.1 — security audit validation follow-up
 

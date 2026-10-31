@@ -26,6 +26,7 @@ Pure stdlib, no LLM, no I/O beyond the final write.
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,18 +71,19 @@ def parse_timestamp(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value) if value >= 0 else None
+        # JSON accepts 1e309 (-> inf); a non-finite cue matches nothing.
+        return float(value) if math.isfinite(value) and value >= 0 else None
     if not isinstance(value, str):
         return None
     s = value.strip()
     if not s:
         return None
     try:
-        f = float(s)
+        f = float(s)  # also parses "inf" / "nan"
     except ValueError:
         pass
     else:
-        return f if f >= 0 else None
+        return f if math.isfinite(f) and f >= 0 else None
     m = _TS_RE.match(s)
     if not m:
         return None
@@ -171,10 +173,40 @@ def _coerce_score(v: Any) -> int | None:
     if isinstance(v, bool):
         return None
     try:
-        n = round(float(v))
+        f = float(v)
     except (TypeError, ValueError):
         return None
-    return max(1, min(10, n))
+    if not math.isfinite(f):  # round(inf) raises OverflowError
+        return None
+    return max(1, min(10, round(f)))
+
+
+_MAX_ECHO_CHARS = 200
+
+
+def _json_safe(value: Any, depth: int = 0) -> Any:
+    """Echo model-supplied data into ``requested``/``dropped`` safely.
+
+    Non-finite numbers become ``None`` (``json.dumps`` would otherwise emit
+    the non-standard ``Infinity``/``NaN``), long strings are truncated, and
+    anything nested or exotic becomes a short ``repr``.
+    """
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        return value[:_MAX_ECHO_CHARS]
+    if depth < 2 and isinstance(value, list):
+        return [_json_safe(v, depth + 1) for v in value[:20]]
+    if depth < 2 and isinstance(value, dict):
+        return {str(k)[:50]: _json_safe(v, depth + 1) for k, v in list(value.items())[:20]}
+    return repr(value)[:_MAX_ECHO_CHARS]
+
+
+def _dumps(doc: dict[str, Any]) -> str:
+    # allow_nan=False: the file is a machine contract; never emit Infinity.
+    return json.dumps(doc, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
 
 
 def _str(v: Any) -> str:
@@ -253,9 +285,10 @@ def build_clips(
 
     for raw in raw_clips:
         if not isinstance(raw, dict):
-            dropped.append({"requested": raw, "reason": "clip entry is not an object"})
+            dropped.append({"requested": _json_safe(raw),
+                            "reason": "clip entry is not an object"})
             continue
-        req = {"start": raw.get("start"), "end": raw.get("end")}
+        req = {"start": _json_safe(raw.get("start")), "end": _json_safe(raw.get("end"))}
         title = _str(raw.get("title"))
         kind = _str(raw.get("kind")).lower()
 
@@ -264,7 +297,7 @@ def build_clips(
                             "requested": req, "reason": reason})
 
         if kind not in KIND_BOUNDS:
-            _drop(f"unknown kind {raw.get('kind')!r} (expected short|long)")
+            _drop(f"unknown kind {_json_safe(raw.get('kind'))!r} (expected short|long)")
             continue
         t0 = parse_timestamp(raw.get("start"))
         t1 = parse_timestamp(raw.get("end"))
@@ -285,9 +318,9 @@ def build_clips(
         next_start = segs[last + 1]["start"] if last + 1 < len(segs) else duration
         # Pad into the surrounding silence, never into a neighbour's speech.
         start_s = min(seg_start, max(0.0, seg_start - PAD_BEFORE_S, prev_end))
-        end_s = max(seg_end, min(seg_end + PAD_AFTER_S, next_start))
-        if duration:
-            end_s = min(end_s, float(duration))
+        # ``duration`` is always positive here (it falls back to the last
+        # segment end above), so the clamp never collapses a clip to zero.
+        end_s = min(max(seg_end, min(seg_end + PAD_AFTER_S, next_start)), float(duration))
         length = end_s - start_s
         lo, hi = KIND_BOUNDS[kind]
         if length < lo or length > hi:
@@ -403,8 +436,9 @@ def relabel_clips_file(path: str | Path, label_map: dict[str, str]) -> bool:
                 clip["text"] = new_text
                 changed = True
     if changed:
+        text = _dumps(doc)
         tmp = path.with_name(f".{path.name}.tmp")
-        tmp.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        tmp.write_text(text, encoding="utf-8")
         tmp.replace(path)
     return changed
 
@@ -422,11 +456,26 @@ def write_clips(
     *,
     lang_suffix: str | None = None,
 ) -> Path:
+    """Build and write ``<basename>.clips[.<lang>].json``; returns its path."""
+    return write_clips_doc(
+        summary_result, transcript, output_dir, basename, lang_suffix=lang_suffix,
+    )[0]
+
+
+def write_clips_doc(
+    summary_result: Any,
+    transcript: Any,
+    output_dir: str | Path,
+    basename: str,
+    *,
+    lang_suffix: str | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Build and write ``<basename>.clips[.<lang>].json`` for a template summary.
 
     ``summary_result`` is a ``MeetingSummary`` (its ``data``/``data_error``
     carry the parsed JSON block); ``transcript`` is the FULL transcript
     (CROSSTALK included — the clip text should match what the video says).
+    Returns ``(path, document)`` so callers can report without reading back.
     """
     audio = getattr(transcript, "audio_file", "") or ""
     doc = build_clips(
@@ -446,7 +495,8 @@ def write_clips(
     }
     path = clips_path(output_dir, basename, lang_suffix)
     path.parent.mkdir(parents=True, exist_ok=True)
+    text = _dumps(doc)  # serialize BEFORE touching the filesystem
     tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
-    return path
+    return path, doc

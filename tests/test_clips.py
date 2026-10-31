@@ -340,3 +340,269 @@ def test_sync_pushes_clips_under_own_name(tmp_path):
     assert dests["m.clips.de.json"] == "clips.de.json"
     assert dests["m.video-clipping.md"] == "video-clipping.md"
     assert "m.video-clipping.meta.json" not in dests
+
+
+# ── review fixes (PR #35) ───────────────────────────────────────────────────
+
+
+@pytest.fixture
+def no_template_env(monkeypatch):
+    for name in ("MILLET_SUMMARY_TEMPLATE", "MEETSCRIBE_SUMMARY_TEMPLATE"):
+        monkeypatch.delenv(name, raising=False)
+    return monkeypatch
+
+
+def _gen(tmp_path, fake, **kw):
+    """Run the CLI's initial-summary helper with a fake summarizer."""
+    from millet.cli._helpers import _generate_summary
+
+    segs = _segs()
+    files: dict = {}
+    with patch("millet.summarize.summarize", return_value=fake) as summ:
+        result = _generate_summary(_txn(segs), tmp_path, "01ABC", None, files, **kw)
+    return result, files, summ
+
+
+class TestResolvedTemplate:
+    """Finding 1: the template may come from MILLET_SUMMARY_TEMPLATE."""
+
+    def _fake(self):
+        return _summary({"clips": [_clip(_segs(), 2, 5)]})
+
+    @pytest.mark.parametrize("env_name", ["MILLET_SUMMARY_TEMPLATE",
+                                          "MEETSCRIBE_SUMMARY_TEMPLATE"])
+    def test_initial_summary_env_template_writes_clips(self, tmp_path, no_template_env,
+                                                       env_name):
+        no_template_env.setenv(env_name, "video-clipping")
+        result, files, summ = _gen(tmp_path, self._fake())
+        assert summ.call_args.args[1].template == "video-clipping"
+        assert result is not None
+        assert (tmp_path / "01ABC.video-clipping.md").exists()
+        assert not (tmp_path / "01ABC.summary.md").exists()
+        assert files["clips"] == tmp_path / "01ABC.clips.json"
+        assert len(json.loads(files["clips"].read_text())["clips"]) == 1
+
+    def test_explicit_template_is_normalized(self, tmp_path, no_template_env):
+        _, files, _ = _gen(tmp_path, self._fake(), summary_template="Video-Clipping")
+        assert (tmp_path / "01ABC.video-clipping.md").exists()
+        assert files["clips"].name == "01ABC.clips.json"
+
+    def test_no_template_writes_no_clips(self, tmp_path, no_template_env):
+        _, files, _ = _gen(tmp_path, _summary(None))
+        assert (tmp_path / "01ABC.summary.md").exists()
+        assert "clips" not in files and not (tmp_path / "01ABC.clips.json").exists()
+
+    def test_regeneration_env_template_writes_clips(self, tmp_path, no_template_env):
+        no_template_env.setenv("MILLET_SUMMARY_TEMPLATE", "video-clipping")
+        sdir = tmp_path / "01ABC"
+        sdir.mkdir()
+        _txn(_segs()).save(sdir, basename="01ABC")
+        (sdir / "01ABC.summary.md").write_text("primary")
+        with patch("millet.summarize.is_backend_available", return_value=True), \
+             patch("millet.summarize.summarize", return_value=self._fake()), \
+             patch("millet.transcribe.ensure_gpu_available", lambda *a, **k: None):
+            files = apply_labels(sdir, {}, regenerate_summary=True)
+        assert files["clips"] == sdir / "01ABC.clips.json"
+        assert (sdir / "01ABC.video-clipping.md").exists()
+        assert (sdir / "01ABC.summary.md").read_text() == "primary"
+
+    def test_additional_language_coexists_with_primary(self, tmp_path, no_template_env):
+        sdir = tmp_path / "01ABC"
+        sdir.mkdir()
+        segs = _segs()
+        _txn(segs).save(sdir, basename="01ABC")
+        primary = _summary({"clips": [_clip(segs, 2, 5)]})
+        german = _summary({"clips": [_clip(segs, 10, 13, title="Haken")]})
+        ctx = (patch("millet.summarize.is_backend_available", return_value=True),
+               patch("millet.transcribe.ensure_gpu_available", lambda *a, **k: None))
+        with ctx[0], ctx[1], patch("millet.summarize.summarize", return_value=primary):
+            apply_labels(sdir, {}, regenerate_summary=True, summary_template="video-clipping")
+        before = (sdir / "01ABC.clips.json").read_text()
+        with ctx[0], ctx[1], patch("millet.summarize.summarize", return_value=german):
+            files = apply_labels(sdir, {}, regenerate_summary=True,
+                                 summary_template="video-clipping", summary_language="de")
+        assert files["clips"] == sdir / "01ABC.clips.de.json"
+        assert (sdir / "01ABC.video-clipping.de.md").exists()
+        assert (sdir / "01ABC.video-clipping.md").exists()
+        assert (sdir / "01ABC.clips.json").read_text() == before
+        de = json.loads((sdir / "01ABC.clips.de.json").read_text())
+        assert de["clips"][0]["title"] == "Haken"
+
+
+class TestClipFailureIsolation:
+    """Finding 2: a clips failure never fails an already-saved summary."""
+
+    @pytest.mark.parametrize("preset", [None, "confidential"])
+    def test_initial_summary_survives_clip_failure(self, tmp_path, no_template_env, preset):
+        fake = _summary({"clips": [_clip(_segs(), 2, 5)]})
+        with patch("millet.clips.write_clips_doc", side_effect=OSError("disk full")):
+            result, files, _ = _gen(tmp_path, fake, summary_template="video-clipping",
+                                    summary_preset=preset)
+        assert result is fake
+        assert files["video-clipping"] == tmp_path / "01ABC.video-clipping.md"
+        assert files["video-clipping"].exists()
+        assert "clips" not in files
+
+    def test_report_failure_after_write_is_isolated(self, tmp_path, no_template_env):
+        # Anything after the write (here: the report) is inside the guard too.
+        fake = _summary({"clips": []})
+        with patch("millet.clips.write_clips_doc",
+                   return_value=(tmp_path / "x.clips.json", {"broken": True})):
+            result, files, _ = _gen(tmp_path, fake, summary_template="video-clipping",
+                                    summary_preset="confidential")
+        assert result is fake and "clips" not in files
+
+    def test_regeneration_survives_clip_failure_with_preset(self, tmp_path, no_template_env):
+        sdir = tmp_path / "01ABC"
+        sdir.mkdir()
+        _txn(_segs()).save(sdir, basename="01ABC")
+        with patch("millet.summarize.is_backend_available", return_value=True), \
+             patch("millet.summarize.summarize", return_value=_summary({"clips": []})), \
+             patch("millet.transcribe.ensure_gpu_available", lambda *a, **k: None), \
+             patch("millet.clips.write_clips_doc", side_effect=OSError("disk full")):
+            files = apply_labels(sdir, {}, regenerate_summary=True,
+                                 summary_template="video-clipping",
+                                 summary_preset="confidential")
+        assert files["video-clipping"].exists() and "clips" not in files
+
+
+class TestNonFinite:
+    """Finding 3: JSON accepts 1e309 (inf); the cut list must stay valid JSON."""
+
+    INF = json.loads("1e309")
+
+    def _strict_doc(self, tmp_path, data):
+        path = write_clips(_summary(data), _txn(_segs()), tmp_path, "s")
+
+        def _reject(token):
+            raise AssertionError(f"non-standard JSON constant {token}")
+
+        return json.loads(path.read_text(), parse_constant=_reject)
+
+    def test_parse_rejects_non_finite(self):
+        assert parse_timestamp(self.INF) is None
+        assert parse_timestamp(float("nan")) is None
+        assert parse_timestamp("inf") is None and parse_timestamp("nan") is None
+
+    @pytest.mark.parametrize("score", [json.loads("1e309"), float("nan"), "inf"])
+    def test_non_finite_score_is_null(self, tmp_path, score):
+        segs = _segs()
+        doc = self._strict_doc(tmp_path, {"clips": [_clip(segs, 2, 5, score=score)]})
+        assert doc["clips"][0]["score"] is None
+
+    @pytest.mark.parametrize("field", ["start", "end"])
+    def test_non_finite_timestamp_dropped_and_not_echoed(self, tmp_path, field):
+        clip = _clip(_segs(), 2, 5)
+        clip[field] = self.INF
+        doc = self._strict_doc(tmp_path, {"clips": [clip]})
+        assert doc["clips"] == []
+        assert doc["dropped"][0]["reason"] == "unparseable start/end timestamp"
+        assert doc["dropped"][0]["requested"][field] is None
+
+    def test_junk_entry_with_non_finite_is_sanitized(self, tmp_path):
+        doc = self._strict_doc(tmp_path, {"clips": [
+            [self.INF, {"x": self.INF}], self.INF, {"kind": self.INF},
+        ]})
+        assert doc["dropped"][0]["requested"] == [None, {"x": None}]
+        assert doc["dropped"][1]["requested"] is None
+        assert "unknown kind" in doc["dropped"][2]["reason"]
+
+    def test_serialization_guard(self):
+        with pytest.raises(ValueError):
+            clips._dumps({"x": self.INF})
+
+
+# ── defensive branches (changed-line coverage) ──────────────────────────────
+
+
+class TestDefensiveInputs:
+    def test_dict_segments_and_invalid_segments_skipped(self):
+        segs = [
+            {"start": 0.0, "end": 20.0, "text": "a", "speaker": "S", "words": None},
+            {"start": "x", "end": 1.0},                  # unparseable -> skipped
+            {"start": 30.0, "end": 25.0, "text": "bad"},  # end < start -> skipped
+            {"start": 21.0, "end": 40.0, "text": "b", "speaker": "S"},
+        ]
+        doc = build_clips({"clips": [{"kind": "short", "start": "00:00:00",
+                                      "end": "00:00:40"}]}, segs)
+        (c,) = doc["clips"]
+        assert c["segments"] == [0, 1] and c["text"] == "S: a\nS: b"
+
+    @pytest.mark.parametrize("score", [True, "abc", None, [3]])
+    def test_unusable_score_is_null(self, score):
+        segs = _segs()
+        (c,) = build_clips({"clips": [_clip(segs, 2, 5, score=score)]}, segs)["clips"]
+        assert c["score"] is None
+
+    def test_word_filtering(self):
+        segs = _segs(n=6)
+        segs[2].words = [
+            "not-a-dict",
+            {"word": "", "start": segs[2].start, "end": segs[2].start + 0.2},
+            {"word": "notime"},
+            {"word": "before", "start": 0.0, "end": 0.1},
+            {"word": "kept", "start": segs[2].start, "end": segs[2].start + 0.3},
+        ]
+        (c,) = build_clips({"clips": [_clip(segs, 2, 4)]}, segs)["clips"]
+        assert [w["word"] for w in c["words"]][0] == "kept"
+        assert "before" not in [w["word"] for w in c["words"]]
+
+    def test_no_timed_segments(self):
+        doc = build_clips({"clips": [{"kind": "short"}]}, [])
+        assert doc["error"] == "transcript has no timed segments"
+
+    def test_json_safe_truncates_exotic_values(self):
+        deep = {"a": {"b": {"c": 1}}}
+        assert clips._json_safe(deep) == {"a": {"b": repr({"c": 1})}}
+        assert clips._json_safe(object()).startswith("<object")
+        assert len(clips._json_safe("x" * 1000)) == clips._MAX_ECHO_CHARS
+
+
+class TestRelabelEdgeCases:
+    def test_noop_and_malformed_inputs(self, tmp_path):
+        p = tmp_path / "s.clips.json"
+        p.write_text(json.dumps({"clips": "nope"}))
+        assert not relabel_clips_file(p, {})
+        assert not relabel_clips_file(p, {"A": "B"})
+        p.write_text(json.dumps(["not", "a", "doc"]))
+        assert not relabel_clips_file(p, {"A": "B"})
+
+    def test_merges_speakers_and_skips_odd_entries(self, tmp_path):
+        p = tmp_path / "s.clips.json"
+        p.write_text(json.dumps({"clips": [
+            "junk",
+            {"speakers": ["A", "B"], "text": "A: hi\nB: yo\nno label here"},
+            {"speakers": "A", "text": None},
+        ]}))
+        assert relabel_clips_file(p, {"A": "Kemal", "B": "Kemal"})
+        clip = json.loads(p.read_text())["clips"][1]
+        assert clip["speakers"] == ["Kemal"]
+        assert clip["text"] == "Kemal: hi\nKemal: yo\nno label here"
+
+    def test_relabel_failure_is_logged_not_raised(self, tmp_path):
+        sdir = tmp_path / "01ABC"
+        sdir.mkdir()
+        _txn(_segs()).save(sdir, basename="01ABC")
+        (sdir / "01ABC.clips.json").write_text("not json")
+        logs: list[str] = []
+        apply_labels(sdir, {"SPEAKER_00": "Kemal"}, regenerate_summary=False,
+                     progress_callback=logs.append)
+        assert any("Clip relabel failed" in m for m in logs)
+
+
+def test_initial_summary_reports_clip_error(tmp_path, no_template_env, capsys):
+    _gen(tmp_path, _summary(None, data_error="fenced JSON parse error: x"),
+         summary_template="video-clipping")
+    assert "Clips: fenced JSON parse error" in capsys.readouterr().err
+
+
+def test_relabel_unrelated_map_leaves_clips_untouched(tmp_path):
+    sdir = tmp_path / "01ABC"
+    sdir.mkdir()
+    segs = _segs()
+    _txn(segs).save(sdir, basename="01ABC")
+    write_clips(_summary({"clips": [_clip(segs, 2, 5)]}), _txn(segs), sdir, "01ABC")
+    before = (sdir / "01ABC.clips.json").read_text()
+    files = apply_labels(sdir, {"NOBODY": "x"}, regenerate_summary=False)
+    assert "clips" not in files
+    assert (sdir / "01ABC.clips.json").read_text() == before
