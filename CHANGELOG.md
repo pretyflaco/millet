@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — fix: two people diarized as one in a short mono interview
+## v0.23.1 — fix: two people diarized as one in a short mono interview
 
 Incident 2026-11-02 (vezir session `01M6EV6Z`, 58 s, vezir-android 0.17.0,
 mono): an interview came back with a single speaker.  Not a regression: the
