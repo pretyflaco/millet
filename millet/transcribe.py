@@ -623,6 +623,12 @@ class TranscriptionConfig:
     # their Pearson correlation is at or above this threshold.
     channel_duplicate_corr: float = 0.98
 
+    # ── Per-segment speaker repair (mono / mixdown path) ──
+    # After diarization, embed each ASR segment and split a cluster that
+    # clearly holds two voices (see millet.speaker_repair).  Disable via
+    # --no-speaker-repair.
+    speaker_repair: bool = True
+
     # Internal: set to True by __post_init__ when `device` was auto-flipped
     # to 'cpu' because the requested accelerator was unavailable.  Used to
     # produce an honest annotation in the model-load log line — distinguishes
@@ -2278,26 +2284,32 @@ def transcribe(
         # padded silence at the end to help the VAD).
         max_t = duration if duration and duration > 0 else float("inf")
 
-        speaker_ids = set()
         segments = []
         for seg in result["segments"]:
             seg_start = min(seg["start"], max_t)
             seg_end = min(seg["end"], max_t)
             if seg_end <= seg_start:
                 continue  # skip segments that fall entirely in the padding
-            speaker = seg.get("speaker")
-            if speaker:
-                speaker_ids.add(speaker)
             segments.append(
                 Segment(
                     start=seg_start,
                     end=seg_end,
                     text=seg["text"],
-                    speaker=speaker,
+                    speaker=seg.get("speaker"),
                     words=seg.get("words"),
                 )
             )
 
+        # ── Step 4b: Per-segment speaker repair ──
+        # pyannote can put two people into one cluster (quick Q&A turns it
+        # never cuts).  Re-check each cluster against per-segment voice
+        # embeddings and move a clearly different voice out of it.
+        if config.speaker_repair and config.hf_token and segments:
+            from millet.speaker_repair import repair_speakers
+
+            repair_speakers(audio, segments, device=config.torch_device)
+
+        speaker_ids = {s.speaker for s in segments if s.speaker}
         speakers = [Speaker(id=sid) for sid in sorted(speaker_ids)]
 
         # ── Step 5: Dual-channel speaker labeling ──

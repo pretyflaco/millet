@@ -130,24 +130,36 @@ LEARN_MIN_WORDS_PER_SECOND = 1.5     # speech, not a filler stretched over silen
 LEARN_MIN_SPEECH_SECONDS = MATCH_MIN_SPEECH_SECONDS  # same floor as auto-apply
 
 
+def is_dense_utterance(seg) -> bool:
+    """True if ``seg`` is real speech: a sentence spoken at a speaking rate.
+
+    >= :data:`MIN_SEGMENT_DURATION`, >= :data:`LEARN_MIN_WORDS` words and
+    >= :data:`LEARN_MIN_WORDS_PER_SECOND`.  Fillers ("Okay.", "Yeah.") and
+    fillers Whisper stretched over silence fail it.
+    """
+    dur = seg.end - seg.start
+    words = len((getattr(seg, "text", "") or "").split())
+    return (
+        dur >= MIN_SEGMENT_DURATION
+        and words >= LEARN_MIN_WORDS
+        and words / dur >= LEARN_MIN_WORDS_PER_SECOND
+    )
+
+
 def learnable_segments(transcript_segments: list, speaker_id: str) -> list[tuple[float, float]]:
     """``(start, end)`` spans of ``speaker_id`` fit to learn a voiceprint from.
 
-    Dense segments only (>= :data:`MIN_SEGMENT_DURATION`,
-    >= :data:`LEARN_MIN_WORDS` words, >= :data:`LEARN_MIN_WORDS_PER_SECOND`),
-    most words first, at most :data:`MAX_SEGMENTS_PER_SPEAKER`.  Returns
-    ``[]`` when their total is under :data:`LEARN_MIN_SPEECH_SECONDS` — a
-    filler / echo / silence cluster must never create or update a profile.
+    Dense segments only (:func:`is_dense_utterance`), most words first, at
+    most :data:`MAX_SEGMENTS_PER_SPEAKER`.  Returns ``[]`` when their total is
+    under :data:`LEARN_MIN_SPEECH_SECONDS` — a filler / echo / silence cluster
+    must never create or update a profile.
     """
     dense: list[tuple[int, float, float]] = []
     for seg in transcript_segments:
-        if seg.speaker != speaker_id:
+        if seg.speaker != speaker_id or not is_dense_utterance(seg):
             continue
-        dur = seg.end - seg.start
         words = len((getattr(seg, "text", "") or "").split())
-        if (dur >= MIN_SEGMENT_DURATION and words >= LEARN_MIN_WORDS
-                and words / dur >= LEARN_MIN_WORDS_PER_SECOND):
-            dense.append((words, seg.start, seg.end))
+        dense.append((words, seg.start, seg.end))
     dense.sort(key=lambda d: d[0], reverse=True)
     selected = [(s, e) for _, s, e in dense[:MAX_SEGMENTS_PER_SPEAKER]]
     if sum(e - s for s, e in selected) < LEARN_MIN_SPEECH_SECONDS:

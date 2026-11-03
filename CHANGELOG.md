@@ -1,5 +1,52 @@
 # Changelog
 
+## Unreleased — fix: two people diarized as one in a short mono interview
+
+Incident 2026-11-02 (vezir session `01M6EV6Z`, 58 s, vezir-android 0.17.0,
+mono): an interview came back with a single speaker.  Not a regression: the
+Android capture path is unchanged since 0.16.1, pyannote 4.0.4 /
+`speaker-diarization-community-1` has been installed since July, and the
+current stack reproduces the speaker splits of two earlier Android sessions.  Two things went
+wrong in turn:
+
+1. pyannote produced one turn for the first 43 s of quick question/answer
+   exchanges and gave the interviewee only one segment (43.4-47.8 s), even
+   with `num_speakers=2`.  The voices were easy to tell apart: per-segment
+   embeddings put the two speakers' centroids at cosine 0.42.
+2. `label --auto`'s tiny-noise fold (`absorb_tiny_speakers`, <= 5 s and
+   <= 3 segments) then treated that one 4.4 s, 21-word segment as noise and
+   folded it into the interviewer.
+
+Changes:
+
+* **`millet/speaker_repair.py` (new), wired into `transcribe()`'s mono /
+  single-source path after diarization.**  Every ASR segment of at least
+  0.5 s is embedded on its own (the WeSpeaker model voiceprints already use).
+  Each cluster with at least 6 embedded segments gets one average-linkage
+  2-way split.  The split is accepted only if the smaller half has at least
+  3 segments and 4 s of speech, its own segments are coherent (mean cosine
+  >= 0.5), and the two halves' centroids are at most 0.35 alike.  The
+  smaller half then joins an existing speaker it matches at cosine >= 0.6.
+  Otherwise it becomes a new `SPEAKER_NN`, which needs stronger evidence
+  (>= 8 s, centroids <= 0.30).  A failure (no model, any error) leaves the
+  transcript as diarized.  Pure numpy (no scipy); the bipartition matches
+  scipy's average linkage on 300 random cases.  `--no-speaker-repair` /
+  `TranscriptionConfig.speaker_repair=False` turns it off.
+  Replay over the 100 diarized mono sessions on saray:
+  * the incident session: 9 answers (8.3 s) move into the interviewee's
+    cluster;
+  * 56 single-speaker sessions: untouched;
+  * 15 group meetings: 11 moves into an existing speaker and 8 new speakers,
+    not yet checked by ear.
+* **`absorb_tiny_speakers` keeps a small cluster that holds a real sentence**
+  (`voiceprint.is_dense_utterance`: >= 1.5 s, >= 6 words, >= 1.5 words/s, the
+  test voiceprint learning already used).  Fillers still fold.  Replaying
+  704 sessions, 6 tiny clusters stay raw for a human instead of being folded.
+* **Relabeling dedupes frontmatter participants.**  The find-and-replace path
+  turned `SPEAKER_01` into `Kemal` next to the `Kemal` the model had already
+  extracted, so Kemal was listed twice.  Duplicates now collapse into one
+  entry (first wins, missing `role`/`channel` filled from the others).
+
 ## v0.23.0 — feat: `video-clipping` summary template + `clips.json` cut list
 
 A third summary template next to the meeting summary and `iteration-plan`:
