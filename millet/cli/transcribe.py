@@ -241,6 +241,13 @@ def _cue_frames(audio_path, enabled: bool):
     "mic channel are split instead of collapsing into one. On by default.",
 )
 @click.option(
+    "--speaker-repair/--no-speaker-repair",
+    default=True,
+    help="After diarization (mono path), embed each segment and split a "
+    "speaker cluster that clearly holds two voices, e.g. quick interview "
+    "answers pyannote merged into the interviewer. On by default.",
+)
+@click.option(
     "--language-detection-segments",
     type=int,
     default=6,
@@ -285,6 +292,7 @@ def transcribe(
     channel_correct_margin,
     consolidate_remote_clusters,
     single_source_fallback,
+    speaker_repair,
     language_detection_segments,
     default_language,
 ):
@@ -353,6 +361,7 @@ def transcribe(
         channel_correct_margin=channel_correct_margin,
         consolidate_remote_clusters=consolidate_remote_clusters,
         single_source_fallback=single_source_fallback,
+        speaker_repair=speaker_repair,
         language_detection_segments=language_detection_segments,
         default_language=default_language,
     )

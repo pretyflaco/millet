@@ -631,6 +631,50 @@ class TestApplyLabelsCrosstalk:
         side = json.loads((sdir / "s1.frontmatter.json").read_text())
         assert [p["name"] for p in side["participants"]] == ["Kemal"]
 
+    def test_find_and_replace_path_dedupes_renamed_participant(self, tmp_path):
+        # Incident 01M6EV6Z: the transcribe-time summary listed SPEAKER_01
+        # and the "Kemal" the model read from the text; SPEAKER_01 -> Kemal
+        # left Kemal in the participants twice.
+        from millet.frontmatter import render_frontmatter_block
+
+        sdir = self._session(tmp_path)
+        fm = {"schema_version": 1, "type": "meeting", "participants": [
+            {"name": "Kemal", "role": None, "channel": None},
+            {"name": "SPEAKER_00", "role": None, "channel": "mic"},
+        ]}
+        (sdir / "s1.summary.md").write_text(
+            render_frontmatter_block(fm) + "## Overview\nSPEAKER_00 talked.\n",
+        )
+        apply_labels(sdir, {"SPEAKER_00": "Kemal"}, regenerate_summary=False)
+        side = json.loads((sdir / "s1.frontmatter.json").read_text())
+        assert side["participants"] == [
+            {"name": "Kemal", "role": None, "channel": "mic"},
+        ]
+        assert "Kemal talked." in (sdir / "s1.summary.md").read_text()
+
+
+class TestDedupeParticipants:
+    def test_first_wins_and_fills_missing_fields(self):
+        from millet.label import _dedupe_participants
+
+        out = _dedupe_participants([
+            {"name": "A", "role": None, "channel": None},
+            {"name": "B", "role": "host", "channel": None},
+            {"name": "A", "role": "guest", "channel": "mic"},
+            {"name": "B", "role": "other", "channel": None},
+        ])
+        assert out == [
+            {"name": "A", "role": "guest", "channel": "mic"},
+            {"name": "B", "role": "host", "channel": None},
+        ]
+
+    def test_non_dict_entries_pass_through(self):
+        from millet.label import _dedupe_participants
+
+        assert _dedupe_participants(["x", {"name": None}, "x"]) == [
+            "x", {"name": None}, "x",
+        ]
+
 
 class TestApplyLabelsSummaryTemplate:
     """summary_template writes <name>.<template>.md instead of clobbering
@@ -1003,6 +1047,36 @@ class TestAbsorbTinySpeakers:
         txn = self._txn(segs)
         label_map = {"SPEAKER_00": "Kemal", "SPEAKER_01": "Andrej"}
         assert absorb_tiny_speakers(txn, set(label_map)) == {}
+
+    def test_tiny_cluster_with_a_real_sentence_is_not_noise(self):
+        # Incident 01M6EV6Z (58 s phone interview): the one segment pyannote
+        # split off for the interviewee (4.4 s, 21 words) was folded into
+        # the interviewer, and the session came back with one speaker.
+        segs = [
+            Segment(start=1.3, end=42.9, text="so now I'm just talking here " * 20,
+                    speaker="SPEAKER_01"),
+            Segment(start=43.4, end=47.8,
+                    text="I was riding with a 14-month-old, so it wasn't the "
+                    "easiest flight, but could have been much worse.",
+                    speaker="SPEAKER_00"),
+            Segment(start=47.9, end=58.3, text="business or economy " * 8,
+                    speaker="SPEAKER_01"),
+        ]
+        txn = self._txn(segs)
+        assert absorb_tiny_speakers(txn, set()) == {}
+
+    def test_tiny_cluster_of_fillers_still_folds(self):
+        # Short fillers, and a filler Whisper stretched over silence, are
+        # still noise: the dense-speech exception must not catch them.
+        segs = [
+            Segment(start=0.0, end=300.0, text="main", speaker="SPEAKER_00"),
+            Segment(start=310.0, end=310.4, text="Yeah.", speaker="SPEAKER_01"),
+            # 6 words over 4.5 s: below 1.5 words/s, a stretched filler.
+            Segment(start=320.0, end=324.5, text="Okay, okay, sure, yes, right, fine.",
+                    speaker="SPEAKER_01"),
+        ]
+        txn = self._txn(segs)
+        assert absorb_tiny_speakers(txn, set()) == {"SPEAKER_01": "SPEAKER_00"}
 
 
 # ─── millet label --auto on a raw-id session (end to end, voiceprint mocked) ─

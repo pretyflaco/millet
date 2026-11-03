@@ -373,6 +373,30 @@ def _is_raw_speaker(sid: str) -> bool:
     return bool(_RAW_SPEAKER_RE.match(sid or ""))
 
 
+def _dedupe_participants(participants: Any) -> list:
+    """Collapse frontmatter participants that share a name (first one wins).
+
+    Missing fields (``role``, ``channel``) of the kept entry are filled from
+    the duplicates.  Non-dict entries pass through untouched.
+    """
+    out: list = []
+    by_name: dict[str, dict] = {}
+    for p in participants:
+        name = p.get("name") if isinstance(p, dict) else None
+        if not isinstance(name, str):
+            out.append(p)
+            continue
+        kept = by_name.get(name)
+        if kept is None:
+            by_name[name] = p
+            out.append(p)
+            continue
+        for key, value in p.items():
+            if kept.get(key) is None and value is not None:
+                kept[key] = value
+    return out
+
+
 def crosstalk_label_map(
     transcript: Transcript,
     resolved_ids: set[str],
@@ -421,13 +445,22 @@ def absorb_tiny_speakers(
     The target may itself be a raw id — the point is to collapse noise into the
     real conversation, not to name it.
 
+    A small cluster holding a real sentence (:func:`is_dense_utterance`) is not
+    noise and is left for a human.  Incident 2026-11-02: in a 58 s phone
+    interview, the only segment pyannote split off for the second speaker
+    (4.4 s, 21 words) was folded into the interviewer, so the session came back
+    with one speaker.  Replaying 704 sessions, this keeps 6 tiny clusters raw.
+
     Returns ``{tiny_id: target_id}`` (possibly empty).  Pure/deterministic; the
     caller folds the result into the label_map.  A tiny cluster is never folded
     into another tiny cluster, and if *every* speaker is tiny nothing is folded
     (the whole session is noise — let the worker decide its fate).
     """
+    from millet.voiceprint import is_dense_utterance
+
     speech: dict[str, float] = {}
     count: dict[str, int] = {}
+    dense: set[str] = set()
     segs_by: dict[str, list[tuple[float, float]]] = {}
     for seg in transcript.segments:
         sid = seg.speaker or ""
@@ -436,6 +469,8 @@ def absorb_tiny_speakers(
         s, e = float(seg.start), float(seg.end)
         speech[sid] = speech.get(sid, 0.0) + max(0.0, e - s)
         count[sid] = count.get(sid, 0) + 1
+        if is_dense_utterance(seg):
+            dense.add(sid)
         segs_by.setdefault(sid, []).append((s, e))
 
     if not speech:
@@ -445,6 +480,7 @@ def absorb_tiny_speakers(
         return (
             speech.get(sid, 0.0) <= TINY_SPEAKER_MAX_SECONDS
             and count.get(sid, 0) <= TINY_SPEAKER_MAX_SEGMENTS
+            and sid not in dense
         )
 
     tiny = {
@@ -747,11 +783,14 @@ def apply_labels(
                 if isinstance(p, dict) and isinstance(p.get("name"), str):
                     p["name"] = _replace_all(p["name"])
             # A participant relabeled to CROSSTALK is not a person — drop it.
+            # Renaming can also make two entries one person (SPEAKER_01 ->
+            # Kemal next to the "Kemal" the model already extracted, or two
+            # raw ids labeled with one name): keep one.
             if isinstance(fm_dict.get("participants"), list):
-                fm_dict["participants"] = [
+                fm_dict["participants"] = _dedupe_participants(
                     p for p in fm_dict["participants"]
                     if not (isinstance(p, dict) and is_reserved_label(p.get("name")))
-                ]
+                )
             for ai in fm_dict.get("action_items") or []:
                 if isinstance(ai, dict):
                     if isinstance(ai.get("assignee"), str):

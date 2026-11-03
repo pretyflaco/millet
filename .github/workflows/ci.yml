@@ -97,4 +97,5 @@ jobs:
             tests/test_ssl_cert_injection.py \
             tests/test_sync_core.py \
             tests/test_sync_team.py \
-            tests/test_voiceprint_gate.py
+            tests/test_voiceprint_gate.py \
+            tests/test_speaker_repair.py

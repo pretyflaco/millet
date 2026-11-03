@@ -319,6 +319,19 @@ def test_dense_speech_is_learnable_most_words_first():
     assert LEARN_MIN_SPEECH_SECONDS == 4.0
 
 
+def test_is_dense_utterance():
+    from millet.voiceprint import is_dense_utterance
+
+    def seg(s, e, text):
+        return Segment(start=s, end=e, text=text, speaker="G")
+
+    assert is_dense_utterance(seg(0.0, 4.0, "we shipped the migration fix this morning"))
+    assert not is_dense_utterance(seg(0.0, 6.7, "Yeah."))                   # stretched filler
+    assert not is_dense_utterance(seg(0.0, 1.0, "one two three four five six"))  # < 1.5 s
+    assert not is_dense_utterance(seg(0.0, 5.0, "one two three four five six"))  # 1.2 words/s
+    assert not is_dense_utterance(seg(0.0, 0.0, ""))
+
+
 def test_too_little_dense_speech_is_not_learnable():
     segs = [Segment(start=0.0, end=2.0, text="we shipped the migration fix today", speaker="G")]
     assert learnable_segments(segs, "G") == []

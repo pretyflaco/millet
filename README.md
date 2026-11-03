@@ -319,6 +319,10 @@ Options:
   `--consolidate-remote-clusters/--no-...` to merge phantom remote speakers,
   and `--single-source-fallback/--no-...` for in-room (non-headphone)
   recordings detected as single-source.
+- `--speaker-repair/--no-speaker-repair` -- after diarizing a mono (or
+  single-source) recording, embed each segment and split a speaker cluster
+  that clearly holds two voices, e.g. interview answers pyannote merged into
+  the interviewer (default: on).
 
 #### Dual-channel modes
 
