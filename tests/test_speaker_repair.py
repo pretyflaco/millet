@@ -30,11 +30,11 @@ def _utterance(voice: np.ndarray, rng: np.random.Generator, noise: float = 1.0) 
 
 
 def _items(spec, seed=0):
-    """spec: list of (diarized speaker, true voice, duration)."""
+    """spec: list of (diarized speaker, true voice, duration[, noise])."""
     rng = np.random.default_rng(seed)
     return [
-        RepairItem(i, spk, dur, _utterance(voice, rng))
-        for i, (spk, voice, dur) in enumerate(spec)
+        RepairItem(i, row[0], row[2], _utterance(row[1], rng, *row[3:]))
+        for i, row in enumerate(spec)
     ]
 
 
@@ -49,7 +49,7 @@ def _interview(with_rob_cluster: bool):
         if k < 9:
             spec.append(("SPEAKER_01", ROB, 0.95))  # 9 answers, 8.55 s
     if with_rob_cluster:
-        spec.append(("SPEAKER_00", ROB, 4.4))
+        spec.append(("SPEAKER_00", ROB, 4.4, 0.5))
     return spec
 
 
@@ -118,6 +118,34 @@ class TestPlan:
     def test_small_clusters_are_not_examined(self):
         spec = [("SPEAKER_00", KEMAL, 3.0)] * 3 + [("SPEAKER_00", ROB, 3.0)] * 2
         assert plan_speaker_repair(_items(spec), {"SPEAKER_00"}) == []
+
+    def test_minor_half_found_first_is_still_the_minor(self):
+        # The bipartition labels item 0's group 0; here item 0 is the
+        # interviewee, so the planner must swap to keep "minor" = less speech.
+        spec = [("SPEAKER_01", ROB, 0.95)] * 9 + [("SPEAKER_01", KEMAL, 1.5)] * 17
+        spec.append(("SPEAKER_00", ROB, 4.4, 0.5))
+        moves = plan_speaker_repair(_items(spec), {"SPEAKER_00", "SPEAKER_01"})
+        assert [(m.target, m.indices) for m in moves] == [("SPEAKER_00", tuple(range(9)))]
+
+    def test_incoherent_minor_half_is_rejected(self, monkeypatch):
+        monkeypatch.setattr(sr, "REPAIR_MIN_PART_COHESION", 0.99)
+        assert plan_speaker_repair(_items(_interview(with_rob_cluster=True))) == []
+
+    def test_joins_the_best_matching_of_several_clusters(self):
+        spec = _interview(with_rob_cluster=True) + [("SPEAKER_02", THIRD, 3.0)] * 3
+        moves = plan_speaker_repair(_items(spec), {"SPEAKER_00", "SPEAKER_01", "SPEAKER_02"})
+        assert [m.target for m in moves] == ["SPEAKER_00"]
+
+    @pytest.mark.filterwarnings("ignore::RuntimeWarning")
+    def test_one_sided_subsample_split_is_rejected(self, monkeypatch):
+        # Re-assigning the full cluster to the subsample's two centroids can
+        # leave one side empty; that is no split.  Forced here with a
+        # degenerate subsample split (its second centroid is NaN).
+        monkeypatch.setattr(sr, "REPAIR_MAX_POINTS", 8)
+        monkeypatch.setattr(sr, "average_linkage_bipartition",
+                            lambda emb: np.zeros(len(emb), dtype=int))
+        items = _items([("SPEAKER_00", KEMAL, 2.0)] * 30)
+        assert sr._split_cluster(items) is None
 
     def test_new_ids_skip_existing_ones(self):
         items = _items(_interview(with_rob_cluster=False))
@@ -219,7 +247,91 @@ class TestMonoTranscribeWiring:
         assert [s.id for s in transcript.speakers] == ["SPEAKER_01"]
 
 
+class _FakeTensor:
+    def __init__(self, arr):
+        self.arr = arr
+
+    def unsqueeze(self, dim):
+        return _FakeTensor(np.expand_dims(self.arr, dim))
+
+
+class _FakeInference:
+    """Returns a voice per segment, read from the clip's first sample."""
+
+    def __init__(self, voices, fail_to=False):
+        self.voices = voices
+        self.devices: list = []
+        self.fail_to = fail_to
+
+    def to(self, device):
+        if self.fail_to:
+            raise RuntimeError("no such device")
+        self.devices.append(device)
+
+    def __call__(self, audio):
+        assert audio["sample_rate"] == 16000
+        return self.voices[round(float(audio["waveform"].arr[0, 0]) * 10)]
+
+
+class TestEmbedSegments:
+    def _setup(self, monkeypatch, fail_to=False):
+        import sys
+        from types import SimpleNamespace
+
+        from millet import voiceprint
+
+        voices = {1: KEMAL, 2: ROB, 3: np.array([np.nan] * DIM), 4: np.array([])}
+        inf = _FakeInference(voices, fail_to=fail_to)
+        monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(
+            from_numpy=_FakeTensor, device=lambda name: f"dev:{name}",
+        ))
+        monkeypatch.setattr(voiceprint, "_get_inference", lambda: inf)
+        # 1 s per segment; each second's level encodes which voice it is.
+        levels = [0.1, 0.2, 0.0, 0.1, 0.3, 0.4, 0.2]
+        audio = np.concatenate([np.full(16000, lv, dtype=np.float32) for lv in levels])
+        return inf, audio
+
+    def test_filters_and_embeds(self, monkeypatch):
+        inf, audio = self._setup(monkeypatch)
+        segs = [
+            Segment(0.0, 1.0, "a", "SPEAKER_00"),   # Kemal
+            Segment(1.0, 2.0, "b", "SPEAKER_00"),   # Rob
+            Segment(2.0, 3.0, "c", "SPEAKER_00"),   # silence: below RMS floor
+            Segment(3.0, 3.3, "d", "SPEAKER_00"),   # too short
+            Segment(3.0, 4.0, "e", None),           # unlabeled
+            Segment(4.0, 5.0, "f", "SPEAKER_00"),   # NaN embedding
+            Segment(5.0, 6.0, "g", "SPEAKER_00"),   # empty embedding
+            Segment(6.9, 7.9, "h", "SPEAKER_00"),   # runs past the audio end
+        ]
+        items = sr.embed_segments(audio, segs, device="cuda")
+        assert inf.devices == ["dev:cuda"]
+        assert [(it.index, it.speaker, it.duration) for it in items] == [
+            (0, "SPEAKER_00", 1.0), (1, "SPEAKER_00", 1.0),
+        ]
+        assert np.allclose(items[0].embedding, KEMAL)
+        assert np.allclose(items[1].embedding, ROB)
+
+    def test_device_move_failure_is_tolerated(self, monkeypatch):
+        inf, audio = self._setup(monkeypatch, fail_to=True)
+        items = sr.embed_segments(audio, [Segment(0.0, 1.0, "a", "S")], device="mps")
+        assert len(items) == 1
+
+    def test_no_device_leaves_the_model_alone(self, monkeypatch):
+        inf, audio = self._setup(monkeypatch)
+        sr.embed_segments(audio, [Segment(0.0, 1.0, "a", "S")])
+        assert inf.devices == []
+
+
 class TestRepairSpeakers:
+    def test_no_move_logs_nothing(self, monkeypatch):
+        items = _items([("SPEAKER_00", KEMAL, 2.0)] * 20)
+        segs = self._segments(items)
+        monkeypatch.setattr(sr, "embed_segments", lambda audio, segments, device=None: items)
+        logged: list[str] = []
+        assert repair_speakers(np.zeros(16000), segs, log=logged.append) == []
+        assert logged == []
+        assert {s.speaker for s in segs} == {"SPEAKER_00"}
+
     def _segments(self, items):
         return [Segment(float(it.index), float(it.index) + it.duration, "t", it.speaker, None)
                 for it in items]

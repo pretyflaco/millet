@@ -29,6 +29,7 @@ tested without the model stack.
 
 from __future__ import annotations
 
+import itertools
 import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -160,19 +161,10 @@ def _split_cluster(items: Sequence[RepairItem]) -> tuple[np.ndarray, float] | No
 
 
 def _next_speaker_ids(existing: Iterable[str]) -> Callable[[], str]:
-    taken = set(existing)
-    nums = [int(m.group(1)) for s in taken if (m := _SPEAKER_NUM_RE.match(s))]
-    counter = [max(nums) + 1 if nums else 0]
-
-    def take() -> str:
-        while True:
-            sid = f"SPEAKER_{counter[0]:02d}"
-            counter[0] += 1
-            if sid not in taken:
-                taken.add(sid)
-                return sid
-
-    return take
+    """New ``SPEAKER_NN`` ids, numbered after the highest existing one."""
+    nums = [int(m.group(1)) for s in existing if (m := _SPEAKER_NUM_RE.match(s))]
+    counter = itertools.count(max(nums) + 1 if nums else 0)
+    return lambda: f"SPEAKER_{next(counter):02d}"
 
 
 def plan_speaker_repair(
