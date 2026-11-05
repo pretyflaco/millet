@@ -281,7 +281,7 @@ def test_crosstalk_label_never_updates_profiles(monkeypatch):
 
 
 # ─── Learning hygiene: only dense real speech builds a profile ───────────────
-# The "Peggy" incident (vezir, 2026-09): profile updates took a cluster's
+# A polluted-profile incident: profile updates took a cluster's
 # LONGEST segments — for a filler cluster, fillers Whisper stretched over
 # silence, i.e. room tone + the scribe's echo.  The profile ended up 0.86 to
 # the scribe's echo and 0.10 to the person it was named after, then matched

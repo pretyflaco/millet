@@ -963,7 +963,7 @@ class TestAbsorbTinySpeakers:
         )
 
     def test_tiny_remote_folds_into_unmatched_dominant(self):
-        # The 01KV8G41 case: big UNMATCHED SPEAKER_00 + tiny REMOTE.
+        # A real case: big UNMATCHED SPEAKER_00 + tiny REMOTE.
         segs = [
             Segment(start=0.0, end=300.0, text="long unmatched turn", speaker="SPEAKER_00"),
             Segment(start=312.6, end=313.7, text="Thank you.", speaker="REMOTE"),

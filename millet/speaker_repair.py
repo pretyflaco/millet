@@ -1,6 +1,6 @@
 """Per-segment speaker repair for the mono diarization path.
 
-pyannote sometimes puts two people into one cluster.  Incident 2026-11-02: in
+pyannote sometimes puts two people into one cluster.  In
 a 58 s phone interview with quick question/answer turns it produced one turn
 for the first 43 s, and the interviewee's answers all landed in the
 interviewer's cluster.  The two voices were easy to tell apart (centroid

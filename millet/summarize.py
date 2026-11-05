@@ -307,7 +307,7 @@ VISION_MODELS = ("deepseek-v4-1-flash", "glm-5-3-flash", "qwen3-vl", "e2ee-qwen3
 
 # Hard endpoint limit, not a budget choice: the attested vision endpoints
 # reject a request carrying more than 10 images outright — verified live
-# 2026-09-17 (session 01M2P6FTRG4WAKKE5T7TV6HNFM, 18 cue frames → venice
+# 2026-09-17 (a session with 18 cue frames → venice
 # 400 "At most 10 image(s) may be provided in one request").  The job log
 # only carries the chain's last error, so tinfoil's own failure text went
 # uncaptured — the cap is applied to every vision backend so whichever one
@@ -1335,7 +1335,7 @@ class _TinfoilAttemptStuck(TimeoutError):
 def _run_under_deadline(fn, *, seconds: float):
     """Run ``fn()`` under a hard wall-clock deadline in a daemon thread.
 
-    Incident 2026-09-15: the Tinfoil SDK's custom httpx transport can block
+    The Tinfoil SDK's custom httpx transport can block
     in ``ssl.read()`` with no effective timeout — a summary attempt pinned a
     vezir job in ``transcribing`` for 30+ minutes while millet's per-request
     ``timeout=600`` never fired (faulthandler stack: openai -> httpx ->
