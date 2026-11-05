@@ -13,10 +13,10 @@ are coherent and far apart.  The smaller half then either joins an existing
 cluster it clearly belongs to, or becomes a new ``SPEAKER_NN`` for a human to
 name.  A wrong merge cannot be fixed by labeling; an extra speaker can.
 
-Replayed on saray (2026-11-03) over the 100 diarized mono sessions there, with
-the raw ids rebuilt from word-level speakers:
+Replayed over 100 real diarized mono recordings, with the raw ids rebuilt
+from word-level speakers:
 
-* the incident session: 9 segments (8.3 s) move from the interviewer to the
+* the interview that prompted this: 9 segments (8.3 s) move from the interviewer to the
   interviewee's one-segment cluster (split cosine 0.17, join cosine 0.62);
 * 56 single-speaker sessions: no move;
 * 15 group meetings (10-100 min): 11 moves of 4-13 segments into an existing
@@ -58,7 +58,7 @@ REPAIR_MIN_PART_COHESION = 0.5
 # least this well.  That match is evidence of its own.
 REPAIR_JOIN_MIN_COS = 0.6
 # Inventing a new speaker needs more evidence than moving segments to one who
-# is already there: more speech and a wider gap.  On the saray replay this
+# is already there: more speech and a wider gap.  On the replay this
 # halved the new speakers (16 -> 8), all in 30-100 min group meetings.
 REPAIR_NEW_SPEAKER_MIN_SECONDS = 8.0
 REPAIR_NEW_SPEAKER_MAX_CENTROID_COS = 0.30

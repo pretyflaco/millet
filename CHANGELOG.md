@@ -1,12 +1,18 @@
 # Changelog
 
+## Unreleased — no deployment- or organization-specific references
+
+* Package author is `twentyone.ist`.
+* Docs, comments, CLI help examples and older CHANGELOG entries use
+  neutral names (`myteam`, Alice/Bob), with no hostnames, real session ids,
+  team names or people.  Calibration notes keep their aggregate numbers.
+
 ## v0.23.1 — fix: two people diarized as one in a short mono interview
 
-Incident 2026-11-02 (vezir session `01M6EV6Z`, 58 s, vezir-android 0.17.0,
-mono): an interview came back with a single speaker.  Not a regression: the
-Android capture path is unchanged since 0.16.1, pyannote 4.0.4 /
-`speaker-diarization-community-1` has been installed since July, and the
-current stack reproduces the speaker splits of two earlier Android sessions.  Two things went
+A 58 s mono phone interview came back with a single speaker.  Not a
+regression: the Android capture path and the pyannote 4.0.4 /
+`speaker-diarization-community-1` model were unchanged, and the current
+stack reproduces the speaker splits of earlier recordings.  Two things went
 wrong in turn:
 
 1. pyannote produced one turn for the first 43 s of quick question/answer
@@ -32,8 +38,8 @@ Changes:
   transcript as diarized.  Pure numpy (no scipy); the bipartition matches
   scipy's average linkage on 300 random cases.  `--no-speaker-repair` /
   `TranscriptionConfig.speaker_repair=False` turns it off.
-  Replay over the 100 diarized mono sessions on saray:
-  * the incident session: 9 answers (8.3 s) move into the interviewee's
+  Replay over 100 real diarized mono recordings:
+  * the interview that prompted this: 9 answers (8.3 s) move into the interviewee's
     cluster;
   * 56 single-speaker sessions: untouched;
   * 15 group meetings: 11 moves into an existing speaker and 8 new speakers,
@@ -41,10 +47,10 @@ Changes:
 * **`absorb_tiny_speakers` keeps a small cluster that holds a real sentence**
   (`voiceprint.is_dense_utterance`: >= 1.5 s, >= 6 words, >= 1.5 words/s, the
   test voiceprint learning already used).  Fillers still fold.  Replaying
-  704 sessions, 6 tiny clusters stay raw for a human instead of being folded.
+  704 real recordings, 6 tiny clusters stay raw for a human instead of being folded.
 * **Relabeling dedupes frontmatter participants.**  The find-and-replace path
-  turned `SPEAKER_01` into `Kemal` next to the `Kemal` the model had already
-  extracted, so Kemal was listed twice.  Duplicates now collapse into one
+  turned `SPEAKER_01` into `Alice` next to the `Alice` the model had already
+  extracted, so Alice was listed twice.  Duplicates now collapse into one
   entry (first wins, missing `role`/`channel` filled from the others).
 
 ## v0.23.0 — feat: `video-clipping` summary template + `clips.json` cut list
@@ -345,16 +351,15 @@ from the default (it had become a tautology), and a new test pins that the
 
 ## v0.21.5 — voiceprints learn only from real speech; CROSSTALK beats a voiceprint match
 
-Incident 2026-09-30 (vezir, blink team): a profile named "Pattern" (a
-teammate's handle) appeared in dev standups, sales calls and interviews,
-always on the same shape of text — "Okay. | Yeah. | Bye." at ~1 word/s — and
+A voiceprint profile named after a teammate's handle appeared in dev
+standups, sales calls and interviews, always on the same shape of text — "Okay. | Yeah. | Bye." at ~1 word/s — and
 once on a colleague's self-introduction.  Measured on the live DB it sat
 **0.10** from the voice of the person it was named after and **0.86** from
 the *scribe's own voice echoing back through the call* on the system
 channel.  It had been built from filler, then reinforced on every labeling
 submit that confirmed its (pre-filled) match — five running-average merges,
 none reversible.  It also defeated 0.21.4: the filler bucket matched
-"Pattern" at ~0.9 *before* the CROSSTALK rule could see it.
+that profile at ~0.9 *before* the CROSSTALK rule could see it.
 
 ### Fixed
 
@@ -413,7 +418,7 @@ such buckets had been left unnamed by a human.
   ids, as production does.
 * **The tiny-noise fold could overwrite a confident voiceprint match.**  Same
   names-vs-ids mix-up: a short cluster voiceprint had matched (e.g. 2 s →
-  Andrej) still counted as unresolved noise and was folded into the dominant
+  Bob) still counted as unresolved noise and was folded into the dominant
   speaker.  Resolved raw ids are now passed.
 * **`label --auto` fed derived labels into the voiceprint DB.**  Labels it
   derives itself (tiny-noise folds, `CROSSTALK`) counted as "manually
@@ -426,10 +431,9 @@ such buckets had been left unnamed by a human.
 
 ## v0.21.3 — cap summary frames at the endpoint's 10-image request limit
 
-Incident 2026-09-17 (vezir/saray): the first screen recording long enough
-to narrate more than ten cues failed its summary on every backend.  Session
-`01M2P6FTRG4WAKKE5T7TV6HNFM` (18 cue frames, `iteration-plan` template)
-hit venice answering 400 `At most 10 image(s) may be provided in one
+The first screen recording long enough to narrate more than ten cues
+failed its summary on every backend.  The session (18 cue frames,
+`iteration-plan` template) hit venice answering 400 `At most 10 image(s) may be provided in one
 request` — a request-shape validation, not a transient fault, so retry
 budgets burned and the vision gate (correctly) refused to drop the frames
 onto a text-only tier.  `millet label --apply-json` exited 1 and vezir
@@ -491,7 +495,7 @@ error) instead of hard-failing.
 
 ## v0.21.1 — hard wall-clock deadline on every Tinfoil attempt
 
-Incident 2026-09-15 (vezir/saray): a `confidential` summary pinned a job in
+In production, a `confidential` summary pinned a job in
 `transcribing` for 30+ minutes with the GPU idle.  faulthandler stack:
 `openai → httpx → tinfoil custom transport → httpcore _receive_event →
 ssl.read` — blocked forever.  Two compounding causes:
@@ -542,7 +546,7 @@ Tinfoil-side outage no longer takes summarization off attested hardware.
   is a deliberate ceiling delegated to provider reference verifiers, not
   hand-rolled here (see the module).
 - **TLS against a private CA.**  The openai SDK uses httpx, which honors
-  `SSL_CERT_FILE`; on server hosts that points at a private CA (saray's Caddy
+  `SSL_CERT_FILE`; on server hosts that points at a private CA (e.g. Caddy's
   internal CA), so every Venice/NEAR call failed with a misleading "Connection
   error".  These are public endpoints, so the client is pinned to certifi's
   public CA bundle explicitly.  (requests never hit this — it always uses
@@ -566,8 +570,7 @@ Tinfoil-side outage no longer takes summarization off attested hardware.
   providers too.
 - **Local tier (Nemotron), benchmarked.**  The Ollama tier is the zero-network
   privacy floor.  `nemotron-3-nano:4b` (2.8 GB) was benchmarked on an RTX 3090
-  against the current default `qwen3.5:9b`: it fits the saray target (RTX 5070,
-  12 GB) with ~3.2 GB of weights, captured 6/6 key facts in a real summary, at
+  against the current default `qwen3.5:9b`: it fits a 12 GB target GPU (RTX 5070) with ~3.2 GB of weights, captured 6/6 key facts in a real summary, at
   ~17 s vs qwen's ~12.6 s — an easy fit and fine quality for a last-resort tier.
   Point the tier at it with `MILLET_SUMMARY_BACKEND=ollama
   MILLET_SUMMARY_MODEL=nemotron-3-nano:4b` (no code change).  Note the 24 GB
@@ -786,7 +789,7 @@ deployment, both caught before shipping:
 * **Stale `MILLET_SUMMARY_BACKEND` / `MEETSCRIBE_SUMMARY_BACKEND` naming a
   removed backend** no longer raises `ValueError` on every summarization.
   Deployments keep these in systemd env files that outlive an upgrade
-  (saray had `MEETSCRIBE_SUMMARY_BACKEND=claudemax`), so it now degrades to
+  (e.g. `MEETSCRIBE_SUMMARY_BACKEND=claudemax`), so it now degrades to
   the default with a loud warning.  An *explicit* `backend=` argument still
   raises — that is a caller bug, not stale config.
 * **Stale `MILLET_SUMMARY_MODEL` holding an Ollama tag** is no longer sent
@@ -1049,8 +1052,8 @@ once-per-process caching).
   fast find-and-replace path used by vezir's TUI relabel) now applies the
   label map in a **single atomic pass**. The old `_replace_all` chained one
   `re.sub` per key over the same string, so a **swap**
-  `{"Alaaddin":"Kemal","Kemal":"Alaaddin"}` first turned every "Alaaddin"
-  into "Kemal", then the second pass re-caught those just-written "Kemal"s
+  `{"Alice":"Bob","Bob":"Alice"}` first turned every "Alice"
+  into "Bob", then the second pass re-caught those just-written "Bob"s
   and collapsed **both** speakers to a single name — in the summary body, the
   structured frontmatter sidecar (participants/assignees/decisions), and the
   regenerated PDF's summary section. Replacement is now a single
@@ -1387,13 +1390,13 @@ No code changes versus 0.12.13 — the MP3 discovery feature below is unchanged.
 ### Fixed
 
 * **One physical person came back as several speakers, forcing a
-  needs_labeling hop and "Destiny, Destiny, Destiny" in the notes.**
+  needs_labeling hop and "Alice, Alice, Alice" in the notes.**
   Diarization (pyannote) routinely over-segments a single voice into multiple
   clusters — from volume/mic changes, cross-channel bleed (the scribe's voice
   on both the mic and system channels in the dual-diarize path), or peeled-off
   backchannel utterances.  Voiceprint auto-identification used **greedy 1:1
-  matching**: once a profile (say "Destiny") was claimed by its best-scoring
-  cluster, every *other* Destiny cluster was barred from that name and left as
+  matching**: once a profile (say "Alice") was claimed by its best-scoring
+  cluster, every *other* Alice cluster was barred from that name and left as
   a raw `SPEAKER_n`, which (a) routed the session to manual labeling and
   (b) — once a human named each cluster — produced duplicate same-name speaker
   entries that nothing collapsed.
@@ -1651,16 +1654,16 @@ No code changes versus 0.12.13 — the MP3 discovery feature below is unchanged.
 ## v0.12.0 — Dual-diarize: per-channel transcription + remote speaker diarization
 
 New default for stereo recordings (`--mixdown dual-diarize`).  Transcribes the
-mic and system channels **separately** — Kemal's mic stream is captured as a
+mic and system channels **separately** — the local mic stream is captured as a
 continuous "YOU" source immune to overlap with remote speakers — then runs
 **pyannote diarization on the system channel only** to split distinct remote
-speakers (Openoms, Jonas, Max, …).  Downstream voiceprint naming maps each
+speakers (Bob, Carol, Dave, …).  Downstream voiceprint naming maps each
 SPEAKER_N to a real name, exactly as before.
 
 This eliminates the **overlap-fragmentation** problem of the mono path, where
 WhisperX's word timestamps during overlapping speech caused words to flicker
-between speakers ("This year" → Openoms, "they" → Kemal, "rented the" →
-Openoms, "whole island" → Kemal — when Kemal said the entire sentence).
+between speakers ("This year" → Bob, "they" → Alice, "rented the" →
+Bob, "whole island" → Alice — when Alice said the entire sentence).
 Overlapping segments from different channels are **preserved**, not
 serialized.
 
@@ -2059,7 +2062,7 @@ RENAMING handoff for the reasoning behind reserving each.
 
 - **`meet download <lang>` no longer fails with
   `CERTIFICATE_VERIFY_FAILED` on python.org Python builds (macOS)**
-  (reported by @patternn in the M8 retrospective). `torchaudio`'s
+  (reported by a teammate). `torchaudio`'s
   alignment-model fetcher uses raw `urllib`, which inherits the
   interpreter's default SSL context — empty on python.org Python
   installs that ship without a CA bundle. `meet/__init__.py` now

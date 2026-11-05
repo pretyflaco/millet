@@ -54,15 +54,15 @@ def sync(session_dirs, force, meeting_type, list_schedule, init_config, team):
 
     \b
     Per-team setup:
-        millet sync --team blink --init-config
-        # edit ~/.config/meet/blink/sync_config.json
+        millet sync --team myteam --init-config
+        # edit ~/.config/meet/myteam/sync_config.json
 
     \b
     Examples:
         millet sync ~/meet-recordings/meeting-20260330-170216_WeeklySync
         millet sync --force --meeting-type weekly-sync ~/meet-recordings/meeting-20260330-*
         millet sync --list-schedule
-        millet sync --team blink ~/meet-recordings/blink/meeting-*
+        millet sync --team myteam ~/meet-recordings/myteam/meeting-*
     """
     from millet.sync import (
         EXAMPLE_CONFIG,

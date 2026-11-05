@@ -39,7 +39,7 @@ _GHOST_CANDIDATE_RE = re.compile(r"^REMOTE(?:_\d+)?$")
 # Measured in WORDS, not seconds: Whisper stretches filler timestamps ("Yeah."
 # 6.7 s, "No, no, no." 22.6 s), so duration overstates how much was said.
 #
-# Calibrated by replaying 257 real transcripts (5 teams, 2026-03..09):
+# Calibrated by replaying 257 real transcripts:
 #   * 49/55 REMOTE buckets a human had left unnamed become CROSSTALK; the
 #     rest are 1-segment blips (folded by the tiny-noise rule) or real speech
 #     that should reach a human (11.8% share, full German sentences, ...).

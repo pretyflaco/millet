@@ -483,7 +483,7 @@ def label(session_dir, no_audio, no_summary, auto, summary_preset, summary_backe
     # any voiceprint match: there is no single voice in it to match.  Worse,
     # its stretched-filler segments are mostly room tone and the scribe's own
     # voice echoing back through the call, so a profile that once learned
-    # them (vezir 2026-09: "Pattern", ~0.86 to the scribe's echo) matches
+    # them (one real profile sat at ~0.86 to the scribe's echo) matches
     # every such bucket at ~0.9 and keeps it out of CROSSTALK.  Replay data:
     # 1 in 120 ghost-shaped buckets was ever one real person.
     ghost_ids: set[str] = set()

@@ -119,7 +119,7 @@ MIN_SEGMENT_RMS = 0.0015
 # The trap: picking a cluster's LONGEST segments.  For a filler cluster those
 # are the fillers Whisper stretched over silence ("Yeah." spanning 6.7 s) —
 # audio that is mostly room tone and, on the system channel, the scribe's own
-# voice echoing back through the call.  vezir's "Pattern" profile was built
+# voice echoing back through the call.  One real profile was built
 # that way (cosine 0.86 to the scribe's echo, 0.10 to the person it was named
 # after) and then matched filler buckets across every meeting at ~0.9.
 #
@@ -773,7 +773,7 @@ def identify_speakers(
     #    over-segments ONE physical person into several clusters (volume/mic
     #    changes, cross-channel bleed, backchannel splits).  The 1:1 lock used
     #    to leave every cluster after the first as a raw placeholder, forcing a
-    #    needs_labeling hop and producing duplicate "Destiny ×3" entries after a
+    #    needs_labeling hop and producing duplicate "Alice ×3" entries after a
     #    human named them.  Instead, allow an already-used profile to ALSO claim
     #    additional clusters — but only when that profile is the cluster's OWN
     #    top match AND the match is independently confident (clears the
