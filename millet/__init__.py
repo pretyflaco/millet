@@ -7,7 +7,7 @@ made it possible for two Sephardic Jewish brothers to establish
 Istanbul's first printing press.  Part of the vezir ecosystem.
 """
 
-# ── F3 fix (M8, reported by @patternn 2026-05-17): inject certifi's CA
+# ── F3 fix (M8, reported by a teammate): inject certifi's CA
 # bundle as SSL_CERT_FILE if not already set. ──────────────────────────────
 #
 # `meet download <lang>` calls torchaudio's alignment-model fetcher

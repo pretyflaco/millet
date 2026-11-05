@@ -7,21 +7,21 @@ conservative thresholds). This doc records the analysis and the decision space.
 
 ## Symptom
 
-Session `01KVD14J5E696J71HTSMNPPRA1` (devstandup): Kim joined ~27:32, yet the
-transcript attributed early backchannel to Kim:
+In a dev standup, Bob joined ~27:32, yet the
+transcript attributed early backchannel to Bob:
 
 ```
-Kim 00:10  Thank you. Yeah. Yeah.
-Kim 00:53  OK.
-Kim 00:58  I had something.
+Bob 00:10  Thank you. Yeah. Yeah.
+Bob 00:53  OK.
+Bob 00:58  I had something.
 ```
 
 ## Root cause
 
 pyannote diarization **under-segmented**: it placed 5 early sub-1.5 s
 backchannel utterances (from whoever was present at the start) into the *same*
-cluster (`SPEAKER_02`) that later held Kim's real speech. Voiceprint matching
-then named the whole cluster "Kim" (0.92, dominated by Kim's 84 real segments),
+cluster (`SPEAKER_02`) that later held Bob's real speech. Voiceprint matching
+then named the whole cluster "Bob" (0.92, dominated by Bob's 84 real segments),
 so the 5 early fragments inherited the wrong name.
 
 This is upstream of voiceprint matching, which only ever sees/labels **whole
@@ -29,7 +29,7 @@ clusters**. It is the *opposite* of the over-segmentation in issue #1.
 
 ### Measured signature (this session)
 
-| Property | Early outliers (5) | Kim main mass (84) |
+| Property | Early outliers (5) | Bob main mass (84) |
 |---|---|---|
 | Time span | 11–59 s | 1588 s (26.5 min) → 64.7 min |
 | Gap to main mass | **1529 s (25.5 min)** | — |
@@ -64,7 +64,7 @@ excluded from the cluster's *embedding* (so the match itself is unaffected);
 - Only fires when the cluster HAS a real main mass (≥ 1 embeddable segment).
 
 On this session B1 reassigns exactly the 5 outliers to `REMOTE`; A1 then absorbs
-them onto the temporally-overlapping early speaker, and Kim's cluster contains
+them onto the temporally-overlapping early speaker, and Bob's cluster contains
 only her real (≥26.5 min) speech.
 
 ## Limitations / follow-ups

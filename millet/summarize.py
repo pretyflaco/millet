@@ -723,7 +723,7 @@ def _default_model_for_backend(backend: str) -> str:
 
     The ollama *fallback* tier is special: it must name a model that is actually
     pulled on the host, which differs per deployment.  ``MILLET_OLLAMA_MODEL``
-    overrides just this tier (e.g. saray sets it to ``nemotron-3-nano:4b``)
+    overrides just this tier (e.g. a 12 GB GPU host might set ``nemotron-3-nano:4b``)
     without touching the global default or leaking into the primary backend the
     way ``MILLET_SUMMARY_MODEL`` would.
     """
@@ -1796,8 +1796,8 @@ def _summarize_attested_oai(
 
     # TLS: these are PUBLIC endpoints, so verify against certifi's CA bundle.
     # The openai SDK uses httpx, which honors SSL_CERT_FILE — and on server
-    # hosts that env var points at a private CA (e.g. saray's Caddy internal
-    # CA, verified 2026-09-15), which lacks public roots and makes every
+    # hosts that env var points at a private CA (e.g. Caddy's internal CA),
+    # which lacks public roots and makes every
     # Venice/NEAR call fail with a misleading "Connection error" instead of
     # the real response.  Pin the public bundle explicitly. (requests dodged
     # this by always using certifi; httpx does not.)

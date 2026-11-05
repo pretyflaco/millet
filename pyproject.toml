@@ -9,7 +9,7 @@ description = "Meeting transcription pipeline (diarization, AI summaries, PDF ou
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "GPL-3.0-or-later"}
-authors = [{name = "pretyflaco"}]
+authors = [{name = "twentyone.ist"}]
 keywords = [
     "meeting",
     "transcription",

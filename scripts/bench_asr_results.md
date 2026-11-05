@@ -1,10 +1,10 @@
 # ASR Backend Benchmark — Results (Phase 2)
 
-Host: muscle (RTX 3090, 24 GB). Date: 2026-05-30.
+Host: a dev box (RTX 3090, 24 GB). Date: 2026-05-30.
 Model: Parakeet TDT 0.6b v2 (English, ONNX via onnx-asr), Silero VAD.
 WhisperX baseline: large-v3-turbo.
 
-## Primary file: meeting-20260413-132247_BITSPENDA (stereo .wav, 1371 s / 22.8 min)
+## Primary file: a recorded meeting (stereo .wav, 1371 s / 22.8 min)
 
 | Config | Backend | Alignment | RTFx | wall (s) | speakers | segments |
 |--------|---------|-----------|------|----------|----------|----------|
@@ -46,7 +46,7 @@ Same conversational window (~03:12–03:41), two people in rapid Q&A:
   overlap-heavy .ogg meetings (UXUI, PROSPERA, BLINKBUS) and ideally with
   --mixdown dual before any auto change.
 
-## Second file: meeting-20260505-170237_UXUI (.ogg, 37 min, overlap-heavy)
+## Second file: a recorded meeting (.ogg, 37 min, overlap-heavy)
 
 | Config | Backend | RTFx | wall (s) | speakers | segments |
 |--------|---------|------|----------|----------|----------|
@@ -58,24 +58,24 @@ Same conversational window (~03:12–03:41), two people in rapid Q&A:
   dual-channel YOU/REMOTE labeler cannot separate them regardless of ASR, and
   pyannote did not split them either.
 - **Key caveat learned:** Parakeet's attribution advantage is realized when
-  speakers are *separable* — i.e. on different channels (the BITSPENDA mic-vs-
+  speakers are *separable* — i.e. on different channels (the first file's mic-vs-
   system case) or cleanly diarizable. When multiple remote speakers are mixed
   on one channel, finer segmentation alone doesn't fix attribution.
 
-## Third file: meeting-20260527-170230_ABCAPETOWN (stereo .wav, 51 min)
+## Third file: a recorded meeting (stereo .wav, 51 min)
 
-A KNOWN misattribution: production transcript attributed Max's "thanks for
-that update" to Kemal. Energy analysis confirms the speakers are cleanly
-channel-separated — Kemal on mic/L (RODE), Max on system/R (Bluetooth) —
+A KNOWN misattribution: production transcript attributed Bob's "thanks for
+that update" to Alice. Energy analysis confirms the speakers are cleanly
+channel-separated — Alice on mic/L (RODE), Bob on system/R (Bluetooth) —
 so attribution is fully achievable. Tested a 150 s clip (25:00–27:30) across
 a 2x2 matrix (whisperx/parakeet x mono/dual) on CUDA.
 
 | Config | mixdown | RTFx | "thanks for that update" attributed to | Correct? |
 |--------|---------|------|----------------------------------------|----------|
-| A whisperx | mono | 17.65 | absorbed into Kemal/YOU block (lost)   | NO (reproduces bug) |
+| A whisperx | mono | 17.65 | absorbed into Alice/YOU block (lost)   | NO (reproduces bug) |
 | B parakeet | mono | 17.45 | absorbed (lost)                        | NO |
-| A whisperx | dual | 16.96 | **REMOTE (Max)**                       | **YES** |
-| B parakeet | dual | 13.68 | **REMOTE (Max)**                       | **YES** |
+| A whisperx | dual | 16.96 | **REMOTE (Bob)**                       | **YES** |
+| B parakeet | dual | 13.68 | **REMOTE (Bob)**                       | **YES** |
 
 ### DECISIVE FINDING
 

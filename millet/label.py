@@ -753,9 +753,9 @@ def apply_labels(
             # Single-pass alternation so each source position is rewritten
             # exactly once from the ORIGINAL text.  Sequential per-key
             # re.sub chained on the same string, which corrupted a SWAP:
-            # {"Alaaddin":"Kemal","Kemal":"Alaaddin"} first turned every
-            # "Alaaddin" into "Kemal", then the second pass re-caught those
-            # just-written "Kemal"s and collapsed BOTH speakers to one name.
+            # {"Alice":"Bob","Bob":"Alice"} first turned every "Alice" into
+            # "Bob", then the second pass re-caught those just-written "Bob"s
+            # and collapsed BOTH speakers to one name.
             # Alternation is sorted longest-first so overlapping labels match
             # the longer one (REMOTE_1 before REMOTE; SPEAKER_10 before
             # SPEAKER_1).  \b guards short labels like "YOU" from prose.
@@ -784,7 +784,7 @@ def apply_labels(
                     p["name"] = _replace_all(p["name"])
             # A participant relabeled to CROSSTALK is not a person — drop it.
             # Renaming can also make two entries one person (SPEAKER_01 ->
-            # Kemal next to the "Kemal" the model already extracted, or two
+            # Alice next to the "Alice" the model already extracted, or two
             # raw ids labeled with one name): keep one.
             if isinstance(fm_dict.get("participants"), list):
                 fm_dict["participants"] = _dedupe_participants(
@@ -920,7 +920,7 @@ def relabel_transcript_in_memory(
     # over-segment one person into several clusters; once they resolve to the
     # same name (via many-to-one voiceprint matching or a human labeling each
     # cluster), they must collapse into a SINGLE speaker entry — otherwise the
-    # transcript/summary/PDF show e.g. "Destiny, Destiny, Destiny".  Segments
+    # transcript/summary/PDF show e.g. "Alice, Alice, Alice".  Segments
     # already point at the merged id above, so this only needs to dedupe the
     # speakers list while preserving first-seen order.
     new_speakers = []

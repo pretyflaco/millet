@@ -35,7 +35,7 @@ def enroll(session_dirs, list_profiles, team):
         millet enroll ~/meet-recordings/meeting-20260330-170216_WeeklySync
         millet enroll ~/meet-recordings/meeting-20260330-*
         millet enroll --list
-        millet enroll --team blink ~/meet-recordings/blink/meeting-*
+        millet enroll --team myteam ~/meet-recordings/myteam/meeting-*
     """
     from millet import paths
     from millet.voiceprint import enroll_session, load_profiles

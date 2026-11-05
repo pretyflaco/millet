@@ -1865,15 +1865,15 @@ def _transcribe_dual_diarize(
     Best-of-both-worlds approach:
 
     * **Mic channel** → transcribed independently → all segments labeled YOU.
-      Kemal's speech is captured continuously from his mic, immune to overlap
+      The local speaker is captured continuously from their mic, immune to overlap
       with remote speakers.  No diarization needed (single local speaker).
 
     * **System channel** → transcribed independently → **pyannote diarization**
       splits the remote stream into distinct speakers (SPEAKER_00, _01, …)
-      which downstream voiceprint matching names (Openoms, Jonas, etc.).
+      which downstream voiceprint matching names (Bob, Carol, etc.).
 
     * Both channels are **merged by timestamp** with overlaps preserved —
-      when Kemal and a remote speak simultaneously, both segments exist at
+      when the local speaker and a remote speak simultaneously, both segments exist at
       that time, each from its own channel.
 
     This eliminates the overlap-fragmentation problem of mono+channel-correct
@@ -2525,7 +2525,7 @@ def _channel_correct_segments(
     Ambiguous / near-balanced segments (the mic-bleed danger zone) are left
     untouched, so we don't *introduce* errors.  We only ever flip between the
     YOU side and the REMOTE side — we never invent or merge named remote
-    speakers, so multi-remote diarization (Max vs Patrick vs Andrej) and the
+    speakers, so multi-remote diarization (Bob vs Carol vs Dave) and the
     downstream voiceprint naming are preserved.  Words inside a flipped or
     mixed segment are corrected individually, which splits a turn-boundary
     segment that contains both a local utterance and a remote interjection.

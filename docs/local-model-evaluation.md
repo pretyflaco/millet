@@ -561,7 +561,7 @@ attested TEE providers between the primary enclave and the local model). The
 `ollama` tier is the **zero-network privacy floor**: it runs only when every
 attested provider is unreachable, so "degrade quality, never confidentiality"
 already applies. NVIDIA's Jetson-optimized `nemotron-3-nano` was proposed for
-it because it is the one Nemotron that fits the saray target (RTX 5070, 12 GB).
+it because it is the one Nemotron that fits a 12 GB target GPU (RTX 5070).
 The question here is narrow: **on a real, hard meeting, is the 4B floor an
 acceptable last resort?**
 
@@ -678,7 +678,7 @@ Nemotron section above; the relative ordering is the point.)
   valid choice only where VRAM is tighter than 6.6 GB or speed matters more than
   completeness.
 
-**Action taken (saray, RTX 5070):** `MILLET_OLLAMA_MODEL` switched from
+**Action taken (RTX 5070 host):** `MILLET_OLLAMA_MODEL` switched from
 `nemotron-3-nano:4b` to `qwen3.5:9b`.
 
 ---
