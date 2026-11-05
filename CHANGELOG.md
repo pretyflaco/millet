@@ -1,16 +1,16 @@
 # Changelog
 
-## Unreleased — neutral test fixtures
+## v0.23.2 — no deployment- or organization-specific references
 
-* Tests use made-up team slugs (`team-a`, `team-b`), names and synthetic
-  session ids instead of real ones.  No behavior change.
-
-## Unreleased — no deployment- or organization-specific references
+No behavior change.
 
 * Package author is `twentyone.ist`.
 * Docs, comments, CLI help examples and older CHANGELOG entries use
   neutral names (`myteam`, Alice/Bob), with no hostnames, real session ids,
-  team names or people.  Calibration notes keep their aggregate numbers.
+  team names, people or production incident dates.  Calibration notes keep
+  their aggregate numbers.
+* Tests use made-up team slugs (`team-a`, `team-b`), names and synthetic
+  session ids instead of real ones.
 
 ## v0.23.1 — fix: two people diarized as one in a short mono interview
 
