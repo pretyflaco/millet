@@ -218,12 +218,12 @@ class TestCrosstalkNotAParticipant:
         monkeypatch.setattr(_pdf, "_escape_xml", spy)
         t = Transcript(
             segments=[
-                Segment(start=0.0, end=5.0, text="hello", speaker="Kemal"),
+                Segment(start=0.0, end=5.0, text="hello", speaker="Nora"),
                 Segment(start=6.0, end=6.2, text="Bye.", speaker="CROSSTALK"),
             ],
-            speakers=[Speaker(id="Kemal", label="Kemal"),
+            speakers=[Speaker(id="Nora", label="Nora"),
                       Speaker(id="CROSSTALK", label="CROSSTALK")],
             language="en", audio_file="x.ogg", duration=10.0,
         )
         generate_pdf(t, tmp_path / "out.pdf")
-        assert "Participants: Kemal" in seen
+        assert "Participants: Nora" in seen

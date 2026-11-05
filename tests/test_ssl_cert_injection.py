@@ -1,6 +1,6 @@
 """Tests for the F3 SSL_CERT_FILE injection in meet/__init__.py.
 
-Reported by @patternn in the M8 retrospective: ``meet download <lang>``
+Reported by @peggy in the M8 retrospective: ``meet download <lang>``
 failed with ``CERTIFICATE_VERIFY_FAILED`` on a python.org Python build
 on macOS, because torchaudio's alignment-model fetcher uses raw urllib
 which inherits the (empty) default SSL context. The fix injects

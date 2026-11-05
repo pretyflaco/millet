@@ -135,7 +135,7 @@ def test_auth_error_fails_fast_no_retry(monkeypatch):
     assert state["attempt"] == 1  # no retry on a real auth error
 
 
-# ── hard wall-clock deadline (incident 2026-09-15) ──────────────────────────
+# ── hard wall-clock deadline ────────────────────────────────────────────────
 #
 # The SDK's custom httpx transport can block in ssl.read() with no effective
 # timeout: millet's per-request timeout=600 never fired and a summary attempt

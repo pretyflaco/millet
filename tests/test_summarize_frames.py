@@ -98,7 +98,7 @@ class TestUsableFrames:
 
     def test_over_cap_samples_evenly_not_head(self, tmp_path):
         """18 cue frames on a ~4-minute recording (session
-        01M2P6FTRG4WAKKE5T7TV6HNFM) exceeded the endpoint's 10-image cap.
+        01J9P94YQEE4VVQ3RCJJ3ZDTDC) exceeded the endpoint's 10-image cap.
         The sample must span the whole timeline: first + last kept, not a
         head-truncation that summarizes only the opening minutes."""
         frames = [_png(tmp_path / f"cue_{i:04d}.png") for i in range(18)]

@@ -20,8 +20,8 @@ def test_team_profiles_path(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("MEET_PROFILES_PATH", raising=False)
     monkeypatch.delenv("MEET_CONFIG_DIR", raising=False)
-    p = paths.profiles_path("blink")
-    assert p == tmp_path / ".config" / "meet" / "blink" / "speaker_profiles.json"
+    p = paths.profiles_path("team-a")
+    assert p == tmp_path / ".config" / "meet" / "team-a" / "speaker_profiles.json"
 
 
 def test_env_override_wins_when_no_team(monkeypatch, tmp_path):
@@ -54,8 +54,8 @@ def test_team_ignores_env_override(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("MEET_PROFILES_PATH", "/custom/profiles.json")
     monkeypatch.delenv("MEET_CONFIG_DIR", raising=False)
-    p = paths.profiles_path("blink")
-    assert p == tmp_path / ".config" / "meet" / "blink" / "speaker_profiles.json"
+    p = paths.profiles_path("team-a")
+    assert p == tmp_path / ".config" / "meet" / "team-a" / "speaker_profiles.json"
 
 
 def test_sync_config_path_team(monkeypatch, tmp_path):
@@ -64,8 +64,8 @@ def test_sync_config_path_team(monkeypatch, tmp_path):
     assert paths.sync_config_path() == (
         tmp_path / ".config" / "meet" / "sync_config.json"
     )
-    assert paths.sync_config_path("twentyone") == (
-        tmp_path / ".config" / "meet" / "twentyone" / "sync_config.json"
+    assert paths.sync_config_path("team-b") == (
+        tmp_path / ".config" / "meet" / "team-b" / "sync_config.json"
     )
 
 
@@ -73,13 +73,13 @@ def test_recordings_dir_team(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("MEET_RECORDINGS_DIR", raising=False)
     assert paths.recordings_dir() == tmp_path / "meet-recordings"
-    assert paths.recordings_dir("blink") == tmp_path / "meet-recordings" / "blink"
+    assert paths.recordings_dir("team-a") == tmp_path / "meet-recordings" / "team-a"
 
 
 def test_recordings_dir_env_override(monkeypatch, tmp_path):
     monkeypatch.setenv("MILLET_RECORDINGS_DIR", str(tmp_path / "rec"))
     assert paths.recordings_dir() == tmp_path / "rec"
-    assert paths.recordings_dir("blink") == tmp_path / "rec" / "blink"
+    assert paths.recordings_dir("team-a") == tmp_path / "rec" / "team-a"
 
 
 @pytest.mark.parametrize("bad", ["AB", "a", "ab", "1team", "has space", "UPPER",
@@ -89,7 +89,7 @@ def test_invalid_team_slug_rejected(bad):
         paths.profiles_path(bad)
 
 
-@pytest.mark.parametrize("good", ["blink", "twentyone", "team-a", "abc",
+@pytest.mark.parametrize("good", ["team-a", "team-b", "team-a", "abc",
                                   "a1b2c3"])
 def test_valid_team_slugs_accepted(good, monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))

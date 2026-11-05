@@ -17,8 +17,8 @@ from millet.voiceprint import (
 
 
 def test_strong_well_separated_match_applies():
-    """0.93 confidence / 0.40 margin (a real Lukas-style match) → applies."""
-    m = SpeakerMatch("Lukas", 0.93, evidence_seconds=958.0, margin=0.40)
+    """0.93 confidence / 0.40 margin (a real Pia-style match) → applies."""
+    m = SpeakerMatch("Pia", 0.93, evidence_seconds=958.0, margin=0.40)
     assert weak_match_reason(m) is None
 
 
@@ -66,7 +66,7 @@ def test_positional_backcompat_not_gated():
 # ─── many-to-one matching (0.12.11) ──────────────────────────────────────────
 # Regression: diarization over-segments ONE person into several clusters
 # (volume/mic changes, cross-channel bleed).  Greedy 1:1 matching used to name
-# only the first cluster and leave the rest raw → needs_labeling + "Destiny ×3".
+# only the first cluster and leave the rest raw → needs_labeling + "Quinn ×3".
 # identify_speakers now lets an already-claimed profile ALSO claim additional
 # clusters when each is confident on its own.
 
@@ -128,43 +128,43 @@ def _run_identify(monkeypatch, *, cluster_embeddings, profiles):
 
 
 def test_two_clusters_same_person_both_matched(monkeypatch):
-    """Two near-identical Destiny clusters → BOTH named Destiny (many-to-one)."""
+    """Two near-identical Quinn clusters → BOTH named Quinn (many-to-one)."""
     destiny = _unit(1.0, 0.0, 0.0)
     andrej = _unit(0.0, 1.0, 0.0)
     matches = _run_identify(
         monkeypatch,
         cluster_embeddings={
-            "SPEAKER_00": _unit(1.0, 0.02, 0.0),   # Destiny (best)
-            "SPEAKER_01": andrej,                   # Andrej
-            "SPEAKER_02": _unit(0.98, 0.05, 0.0),  # Destiny again (high conf)
+            "SPEAKER_00": _unit(1.0, 0.02, 0.0),   # Quinn (best)
+            "SPEAKER_01": andrej,                   # Uma
+            "SPEAKER_02": _unit(0.98, 0.05, 0.0),  # Quinn again (high conf)
         },
         profiles={
-            "Destiny": SpeakerProfile("Destiny", destiny, 3),
-            "Andrej": SpeakerProfile("Andrej", andrej, 3),
+            "Quinn": SpeakerProfile("Quinn", destiny, 3),
+            "Uma": SpeakerProfile("Uma", andrej, 3),
         },
     )
-    assert matches["SPEAKER_00"].name == "Destiny"
-    assert matches["SPEAKER_02"].name == "Destiny"  # would be raw under 1:1
-    assert matches["SPEAKER_01"].name == "Andrej"
+    assert matches["SPEAKER_00"].name == "Quinn"
+    assert matches["SPEAKER_02"].name == "Quinn"  # would be raw under 1:1
+    assert matches["SPEAKER_01"].name == "Uma"
 
 
 def test_secondary_cluster_below_autoapply_stays_unmatched(monkeypatch):
     """A 2nd cluster that only weakly resembles the claimed profile is NOT
     folded on (stays raw → human review), guarding against over-merge."""
     destiny = _unit(1.0, 0.0, 0.0)
-    # Second 'Destiny-ish' cluster at ~0.66 cosine: above MATCH_THRESHOLD (0.65)
+    # Second 'Quinn-ish' cluster at ~0.66 cosine: above MATCH_THRESHOLD (0.65)
     # but below the many-to-one fold floor → not auto-folded.
     weak = _unit(0.66, 0.751, 0.0)
     assert float(np.dot(weak, destiny)) < MATCH_MANY_TO_ONE_CONFIDENCE
     matches = _run_identify(
         monkeypatch,
         cluster_embeddings={
-            "SPEAKER_00": destiny,        # strong Destiny
+            "SPEAKER_00": destiny,        # strong Quinn
             "SPEAKER_01": weak,           # weak resemblance
         },
-        profiles={"Destiny": SpeakerProfile("Destiny", destiny, 3)},
+        profiles={"Quinn": SpeakerProfile("Quinn", destiny, 3)},
     )
-    assert matches["SPEAKER_00"].name == "Destiny"
+    assert matches["SPEAKER_00"].name == "Quinn"
     assert "SPEAKER_01" not in matches
 
 
@@ -237,12 +237,12 @@ def test_single_cluster_per_profile_unchanged(monkeypatch):
         monkeypatch,
         cluster_embeddings={"SPEAKER_00": destiny, "SPEAKER_01": andrej},
         profiles={
-            "Destiny": SpeakerProfile("Destiny", destiny, 3),
-            "Andrej": SpeakerProfile("Andrej", andrej, 3),
+            "Quinn": SpeakerProfile("Quinn", destiny, 3),
+            "Uma": SpeakerProfile("Uma", andrej, 3),
         },
     )
-    assert matches["SPEAKER_00"].name == "Destiny"
-    assert matches["SPEAKER_01"].name == "Andrej"
+    assert matches["SPEAKER_00"].name == "Quinn"
+    assert matches["SPEAKER_01"].name == "Uma"
 
 
 # ─── CROSSTALK is reserved: never enrolled, never matched ────────────────────
@@ -253,17 +253,17 @@ def test_single_cluster_per_profile_unchanged(monkeypatch):
 def test_crosstalk_profile_is_never_matched(monkeypatch):
     """Even if an older build enrolled a CROSSTALK profile, identify ignores it."""
     crosstalk = _unit(1.0, 0.0, 0.0)
-    kemal = _unit(0.0, 1.0, 0.0)
+    nora = _unit(0.0, 1.0, 0.0)
     matches = _run_identify(
         monkeypatch,
-        cluster_embeddings={"SPEAKER_00": crosstalk, "SPEAKER_01": kemal},
+        cluster_embeddings={"SPEAKER_00": crosstalk, "SPEAKER_01": nora},
         profiles={
             "CROSSTALK": SpeakerProfile("CROSSTALK", crosstalk, 5),
-            "Kemal": SpeakerProfile("Kemal", kemal, 5),
+            "Nora": SpeakerProfile("Nora", nora, 5),
         },
     )
     assert "SPEAKER_00" not in matches
-    assert matches["SPEAKER_01"].name == "Kemal"
+    assert matches["SPEAKER_01"].name == "Nora"
 
 
 def test_crosstalk_label_never_updates_profiles(monkeypatch):
@@ -281,7 +281,7 @@ def test_crosstalk_label_never_updates_profiles(monkeypatch):
 
 
 # ─── Learning hygiene: only dense real speech builds a profile ───────────────
-# The "Pattern" incident (vezir, 2026-09): profile updates took a cluster's
+# The "Peggy" incident (vezir, 2026-09): profile updates took a cluster's
 # LONGEST segments — for a filler cluster, fillers Whisper stretched over
 # silence, i.e. room tone + the scribe's echo.  The profile ended up 0.86 to
 # the scribe's echo and 0.10 to the person it was named after, then matched
@@ -293,8 +293,8 @@ from millet.voiceprint import (  # noqa: E402
 )
 
 
-def _pattern_cluster(sid="Pattern"):
-    """Filler cluster as it appeared on 01M3QN8F: stretched 'Yeah.'s."""
+def _pattern_cluster(sid="Peggy"):
+    """Filler cluster as it appeared in a real session: stretched 'Yeah.'s."""
     return [
         Segment(start=10.0, end=16.7, text="Yeah.", speaker=sid),
         Segment(start=40.0, end=45.2, text="Okay.", speaker=sid),
@@ -305,7 +305,7 @@ def _pattern_cluster(sid="Pattern"):
 
 
 def test_filler_cluster_is_not_learnable():
-    assert learnable_segments(_pattern_cluster(), "Pattern") == []
+    assert learnable_segments(_pattern_cluster(), "Peggy") == []
 
 
 def test_dense_speech_is_learnable_most_words_first():
@@ -347,8 +347,8 @@ def test_filler_cluster_never_updates_a_profile(monkeypatch):
     monkeypatch.setattr(_vp, "_get_inference", boom)
     monkeypatch.setattr(_vp, "save_profiles", boom)
     _vp.update_profiles_from_confirmed_labels(
-        Path("/tmp/fake.ogg"), _pattern_cluster(), {"Pattern": "Pattern"},
-        {"Pattern": "system"}, profiles_path=Path("/tmp/profiles.json"),
+        Path("/tmp/fake.ogg"), _pattern_cluster(), {"Peggy": "Peggy"},
+        {"Peggy": "system"}, profiles_path=Path("/tmp/profiles.json"),
     )
 
 
@@ -376,11 +376,11 @@ def test_update_learns_from_dense_spans_only(monkeypatch):
                 speaker="SPEAKER_01"),
     ]
     _vp.update_profiles_from_confirmed_labels(
-        Path("/tmp/fake.ogg"), segs, {"SPEAKER_01": "Gustavo"}, {"SPEAKER_01": "system"},
+        Path("/tmp/fake.ogg"), segs, {"SPEAKER_01": "Rosa"}, {"SPEAKER_01": "system"},
         profiles_path=Path("/tmp/profiles.json"),
     )
     # Neither the stretched "Yeah." (6.7 s) nor "Okay." (5.2 s) — the longest
     # segments, which the old selection preferred — reach the embedding; the
     # one real line in the filler part does (6 words in 2.1 s), most words first.
     assert seen["spans"] == [(200.0, 204.0), (210.0, 213.0), (95.0, 97.1)]
-    assert "Gustavo" in seen["saved"]
+    assert "Rosa" in seen["saved"]

@@ -124,8 +124,8 @@ class TestAutoidSidecar:
         json_path = tmp_path / "meeting-20260314-100000.json"
         json_path.write_text("{}")
         matches = {
-            "Openoms": SimpleNamespace(name="Openoms", confidence=0.93),
-            "Kemal": SimpleNamespace(name="Kemal", confidence=0.8827),
+            "Sam": SimpleNamespace(name="Sam", confidence=0.93),
+            "Nora": SimpleNamespace(name="Nora", confidence=0.8827),
         }
         _write_autoid_sidecar(json_path, matches)
 
@@ -133,10 +133,10 @@ class TestAutoidSidecar:
         assert sidecar.exists()
         data = json.loads(sidecar.read_text())
         assert data["version"] == 1
-        assert data["suggestions"]["Openoms"]["name"] == "Openoms"
-        assert data["suggestions"]["Openoms"]["confidence"] == 0.93
+        assert data["suggestions"]["Sam"]["name"] == "Sam"
+        assert data["suggestions"]["Sam"]["confidence"] == 0.93
         # confidence rounded to 4 dp
-        assert data["suggestions"]["Kemal"]["confidence"] == 0.8827
+        assert data["suggestions"]["Nora"]["confidence"] == 0.8827
 
     def test_empty_matches_writes_empty_suggestions(self, tmp_path):
         from millet.cli.label import _write_autoid_sidecar
@@ -458,23 +458,23 @@ class TestApplyLabels:
         """A swap {A:B, B:A} must swap, not collapse both to one name.
 
         Regression: sequential per-key re.sub chained on the same string —
-        replacing Alaaddin->Kemal first, then Kemal->Alaaddin re-caught the
-        just-written Kemals and collapsed BOTH speakers to a single name in
+        replacing Walter->Nora first, then Nora->Walter re-caught the
+        just-written Noras and collapsed BOTH speakers to a single name in
         the summary/frontmatter/PDF. The relabel must be a single atomic pass.
         """
         summary_path = session_dir / "meeting-20260314-100000.summary.md"
         summary_path.write_text(
-            "Alaaddin opened. Kemal replied. Alaaddin closed.\n"
+            "Walter opened. Nora replied. Walter closed.\n"
         )
         apply_labels(
             session_dir,
-            {"Alaaddin": "Kemal", "Kemal": "Alaaddin"},
+            {"Walter": "Nora", "Nora": "Walter"},
             regenerate_summary=False,
         )
         new_text = summary_path.read_text()
-        assert "Kemal opened." in new_text
-        assert "Alaaddin replied." in new_text
-        assert "Kemal closed." in new_text
+        assert "Nora opened." in new_text
+        assert "Walter replied." in new_text
+        assert "Nora closed." in new_text
 
     def test_find_replace_summary_chain_single_pass(self, session_dir):
         """{A:B, B:C} must not chain A->B->C: each source position is
@@ -580,7 +580,7 @@ class TestApplyLabelsCrosstalk:
         from millet.summarize import MeetingSummary
         return MeetingSummary(
             markdown="## Overview\nFine.", backend="test", model="m",
-            elapsed_seconds=0.1, data={"participants": ["CROSSTALK", "Kemal"]},
+            elapsed_seconds=0.1, data={"participants": ["CROSSTALK", "Nora"]},
             data_error=None,
         )
 
@@ -599,17 +599,17 @@ class TestApplyLabelsCrosstalk:
              patch("millet.summarize.summarize", return_value=self._fake_summary()) as summ, \
              patch("millet.transcribe.ensure_gpu_available", lambda *a, **k: None):
             apply_labels(
-                sdir, {"SPEAKER_00": "Kemal", "REMOTE": CROSSTALK},
+                sdir, {"SPEAKER_00": "Nora", "REMOTE": CROSSTALK},
                 regenerate_summary=True,
             )
         text = summ.call_args.args[0]
-        assert "Kemal: real content" in text
+        assert "Nora: real content" in text
         assert CROSSTALK not in text and "Bye." not in text
         # The transcript itself keeps the line, honestly labeled.
         assert f"{CROSSTALK}: Bye." in (sdir / "s1.txt").read_text()
         # LLM-listed "CROSSTALK" is not a participant.
         fm = json.loads((sdir / "s1.frontmatter.json").read_text())
-        assert [p["name"] for p in fm["participants"]] == ["Kemal"]
+        assert [p["name"] for p in fm["participants"]] == ["Nora"]
 
     def test_find_and_replace_path_drops_crosstalk_participant(self, tmp_path):
         # vezir's `label --auto --no-summary` path: the transcribe-time
@@ -625,32 +625,32 @@ class TestApplyLabelsCrosstalk:
             render_frontmatter_block(fm) + "## Overview\nREMOTE said bye.\n",
         )
         apply_labels(
-            sdir, {"SPEAKER_00": "Kemal", "REMOTE": CROSSTALK},
+            sdir, {"SPEAKER_00": "Nora", "REMOTE": CROSSTALK},
             regenerate_summary=False,
         )
         side = json.loads((sdir / "s1.frontmatter.json").read_text())
-        assert [p["name"] for p in side["participants"]] == ["Kemal"]
+        assert [p["name"] for p in side["participants"]] == ["Nora"]
 
     def test_find_and_replace_path_dedupes_renamed_participant(self, tmp_path):
-        # Incident 01M6EV6Z: the transcribe-time summary listed SPEAKER_01
-        # and the "Kemal" the model read from the text; SPEAKER_01 -> Kemal
-        # left Kemal in the participants twice.
+        # The transcribe-time summary listed SPEAKER_01
+        # and the "Nora" the model read from the text; SPEAKER_01 -> Nora
+        # left Nora in the participants twice.
         from millet.frontmatter import render_frontmatter_block
 
         sdir = self._session(tmp_path)
         fm = {"schema_version": 1, "type": "meeting", "participants": [
-            {"name": "Kemal", "role": None, "channel": None},
+            {"name": "Nora", "role": None, "channel": None},
             {"name": "SPEAKER_00", "role": None, "channel": "mic"},
         ]}
         (sdir / "s1.summary.md").write_text(
             render_frontmatter_block(fm) + "## Overview\nSPEAKER_00 talked.\n",
         )
-        apply_labels(sdir, {"SPEAKER_00": "Kemal"}, regenerate_summary=False)
+        apply_labels(sdir, {"SPEAKER_00": "Nora"}, regenerate_summary=False)
         side = json.loads((sdir / "s1.frontmatter.json").read_text())
         assert side["participants"] == [
-            {"name": "Kemal", "role": None, "channel": "mic"},
+            {"name": "Nora", "role": None, "channel": "mic"},
         ]
-        assert "Kemal talked." in (sdir / "s1.summary.md").read_text()
+        assert "Nora talked." in (sdir / "s1.summary.md").read_text()
 
 
 class TestDedupeParticipants:
@@ -718,7 +718,7 @@ class TestApplyLabelsSummaryTemplate:
 # ─── relabel_transcript_in_memory: same-name speaker collapse (0.12.11) ──────
 # Diarization over-segments one person into several clusters; once they resolve
 # to the same name (via many-to-one voiceprint match or a human naming each),
-# they must collapse into ONE speaker entry instead of "Destiny, Destiny, …".
+# they must collapse into ONE speaker entry instead of "Quinn, Quinn, …".
 
 class TestRelabelSpeakerDedup:
     def _txn(self, speakers, segments):
@@ -733,7 +733,7 @@ class TestRelabelSpeakerDedup:
 
     def test_label_map_collapses_duplicate_names(self):
         # Three raw clusters, two of which a human (or many-to-one) maps to
-        # Destiny; the result must have a single Destiny speaker.
+        # Quinn; the result must have a single Quinn speaker.
         txn = self._txn(
             speakers=[
                 Speaker(id="SPEAKER_00", label="SPEAKER_00"),
@@ -748,39 +748,39 @@ class TestRelabelSpeakerDedup:
         )
         out = relabel_transcript_in_memory(
             txn,
-            {"SPEAKER_00": "Destiny", "SPEAKER_01": "Andrej", "SPEAKER_02": "Destiny"},
+            {"SPEAKER_00": "Quinn", "SPEAKER_01": "Uma", "SPEAKER_02": "Quinn"},
         )
         ids = [s.id for s in out.speakers]
-        assert ids == ["Destiny", "Andrej"]  # de-duped, first-seen order
-        # All Destiny segments now share the one id.
-        assert {seg.speaker for seg in out.segments} == {"Destiny", "Andrej"}
-        assert sum(1 for seg in out.segments if seg.speaker == "Destiny") == 2
+        assert ids == ["Quinn", "Uma"]  # de-duped, first-seen order
+        # All Quinn segments now share the one id.
+        assert {seg.speaker for seg in out.segments} == {"Quinn", "Uma"}
+        assert sum(1 for seg in out.segments if seg.speaker == "Quinn") == 2
 
     def test_empty_map_dedupes_preexisting_duplicates(self):
-        # Backfill case: a transcript already carrying duplicate "Destiny"
+        # Backfill case: a transcript already carrying duplicate "Quinn"
         # entries collapses with an empty label_map.
         txn = self._txn(
             speakers=[
-                Speaker(id="Destiny", label="Destiny"),
-                Speaker(id="Destiny", label="Destiny"),
-                Speaker(id="Andrej", label="Andrej"),
-                Speaker(id="Destiny", label="Destiny"),
+                Speaker(id="Quinn", label="Quinn"),
+                Speaker(id="Quinn", label="Quinn"),
+                Speaker(id="Uma", label="Uma"),
+                Speaker(id="Quinn", label="Quinn"),
             ],
             segments=[
-                Segment(start=0.0, end=2.0, text="a", speaker="Destiny"),
-                Segment(start=2.0, end=4.0, text="b", speaker="Andrej"),
+                Segment(start=0.0, end=2.0, text="a", speaker="Quinn"),
+                Segment(start=2.0, end=4.0, text="b", speaker="Uma"),
             ],
         )
         out = relabel_transcript_in_memory(txn, {})
-        assert [s.id for s in out.speakers] == ["Destiny", "Andrej"]
+        assert [s.id for s in out.speakers] == ["Quinn", "Uma"]
 
     def test_empty_map_no_dupes_is_noop(self):
         txn = self._txn(
             speakers=[
-                Speaker(id="Destiny", label="Destiny"),
-                Speaker(id="Andrej", label="Andrej"),
+                Speaker(id="Quinn", label="Quinn"),
+                Speaker(id="Uma", label="Uma"),
             ],
-            segments=[Segment(start=0.0, end=2.0, text="a", speaker="Destiny")],
+            segments=[Segment(start=0.0, end=2.0, text="a", speaker="Quinn")],
         )
         out = relabel_transcript_in_memory(txn, {})
         assert out is txn  # unchanged object (fast path)
@@ -826,7 +826,7 @@ def _raw_txn(segments, duration=4000.0):
 
 
 def _devstandup_segments():
-    """Shape of session 01M3RS442M3XX4D2AGK80641A7: named-able raw clusters
+    """Shape of session 01JFRC3N09J6R3SS03CS3PBMNJ: named-able raw clusters
     carrying the meeting, plus a 10-segment / 3.2 s REMOTE of fillers, one of
     which is a line leaking from another speaker."""
     segs = []
@@ -859,7 +859,7 @@ class TestCrosstalkLabelMap:
         assert crosstalk_label_map(txn, set()) == {"REMOTE": CROSSTALK}
 
     def test_many_fillers_in_long_meeting_still_crosstalk(self):
-        # 44 fillers / ~22 s in a ~3 h call (session 01M0NQT1): over the old
+        # 44 fillers / ~22 s in a ~3 h call: over the old
         # fixed 25-segment cap, but still < 1% of the meeting.
         segs = [
             Segment(start=i * 60.0, end=i * 60.0 + 55.0, text="talk " * 100,
@@ -976,11 +976,11 @@ class TestAbsorbTinySpeakers:
 
     def test_tiny_remote_folds_into_named_when_present(self):
         segs = [
-            Segment(start=0.0, end=300.0, text="long", speaker="Openoms"),
+            Segment(start=0.0, end=300.0, text="long", speaker="Sam"),
             Segment(start=310.0, end=310.2, text="yeah", speaker="REMOTE"),
         ]
         txn = self._txn(segs)
-        assert absorb_tiny_speakers(txn, {"Openoms"}) == {"REMOTE": "Openoms"}
+        assert absorb_tiny_speakers(txn, {"Sam"}) == {"REMOTE": "Sam"}
 
     def test_substantial_unmatched_not_folded(self):
         # A genuine unlabeled participant (above thresholds) stays raw.
@@ -1038,18 +1038,18 @@ class TestAbsorbTinySpeakers:
 
     def test_short_voiceprint_match_is_not_noise(self):
         # Regression: the CLI passed label-map VALUES (names), so a short raw
-        # cluster voiceprint had confidently matched (SPEAKER_01 → Andrej)
-        # still counted as unresolved noise and was folded into Kemal.
+        # cluster voiceprint had confidently matched (SPEAKER_01 → Uma)
+        # still counted as unresolved noise and was folded into Nora.
         segs = [
             Segment(start=0.0, end=60.0, text="a", speaker="SPEAKER_00"),
             Segment(start=61.0, end=63.0, text="short matched guy", speaker="SPEAKER_01"),
         ]
         txn = self._txn(segs)
-        label_map = {"SPEAKER_00": "Kemal", "SPEAKER_01": "Andrej"}
+        label_map = {"SPEAKER_00": "Nora", "SPEAKER_01": "Uma"}
         assert absorb_tiny_speakers(txn, set(label_map)) == {}
 
     def test_tiny_cluster_with_a_real_sentence_is_not_noise(self):
-        # Incident 01M6EV6Z (58 s phone interview): the one segment pyannote
+        # A 58 s phone interview: the one segment pyannote
         # split off for the interviewee (4.4 s, 21 words) was folded into
         # the interviewer, and the session came back with one speaker.
         segs = [
@@ -1086,7 +1086,7 @@ class TestLabelAutoCrosstalk:
     --no-audio --no-summary, on a fresh transcript that still has raw ids."""
 
     def _session(self, tmp_path):
-        sdir = tmp_path / "01M3RS442M3XX4D2AGK80641A7"
+        sdir = tmp_path / "01JFRC3N09J6R3SS03CS3PBMNJ"
         sdir.mkdir()
         _raw_txn(_devstandup_segments()).save(sdir, basename=sdir.name)
         # Existence is all the CLI checks; channel detection is mocked.
@@ -1113,9 +1113,9 @@ class TestLabelAutoCrosstalk:
 
     def test_ghost_remote_becomes_crosstalk_and_matches_apply(self, tmp_path):
         sdir = self._session(tmp_path)
-        data, upd, out = self._run(sdir, {"SPEAKER_00": "Kemal", "SPEAKER_01": "Lukas"})
+        data, upd, out = self._run(sdir, {"SPEAKER_00": "Nora", "SPEAKER_01": "Pia"})
         ids = {sp["id"] for sp in data["speakers"]}
-        assert ids == {"Kemal", "Lukas", CROSSTALK}
+        assert ids == {"Nora", "Pia", CROSSTALK}
         bye = [s for s in data["segments"] if s["text"] == "Bye."]
         assert bye and all(s["speaker"] == CROSSTALK for s in bye)
         assert "cannot be assigned to a speaker" in out
@@ -1131,19 +1131,19 @@ class TestLabelAutoCrosstalk:
         upd.assert_not_called()
 
     def test_ghost_wins_over_a_strong_voiceprint_match(self, tmp_path):
-        # The "Pattern" incident: a polluted profile matched the filler
+        # The "Peggy" incident: a polluted profile matched the filler
         # bucket at ~0.9, naming it after a person and keeping it out of
         # CROSSTALK.  A ghost bucket has no single voice to match.
         sdir = self._session(tmp_path)
         data, upd, out = self._run(
-            sdir, {"SPEAKER_00": "Kemal", "SPEAKER_01": "Lukas", "REMOTE": "Pattern"},
+            sdir, {"SPEAKER_00": "Nora", "SPEAKER_01": "Pia", "REMOTE": "Peggy"},
         )
         ids = {sp["id"] for sp in data["speakers"]}
-        assert ids == {"Kemal", "Lukas", CROSSTALK}
-        assert "Ignoring voiceprint match REMOTE -> Pattern" in out
+        assert ids == {"Nora", "Pia", CROSSTALK}
+        assert "Ignoring voiceprint match REMOTE -> Peggy" in out
         # Nor is it offered as an auto-id suggestion to the labeling UI.
         sidecar = json.loads((sdir / f"{sdir.name}.autoid.json").read_text())
-        assert "Pattern" not in {v["name"] for v in sidecar["suggestions"].values()}
+        assert "Peggy" not in {v["name"] for v in sidecar["suggestions"].values()}
         upd.assert_not_called()
 
 

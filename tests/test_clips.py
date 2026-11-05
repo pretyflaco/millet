@@ -263,10 +263,10 @@ def test_relabel_clips_file(tmp_path):
     segs = _segs()
     path = write_clips(_summary({"clips": [_clip(segs, 2, 5)]}), _txn(segs), tmp_path, "s")
     before = json.loads(path.read_text())["clips"][0]
-    assert relabel_clips_file(path, {"SPEAKER_00": "Kemal"})
+    assert relabel_clips_file(path, {"SPEAKER_00": "Nora"})
     after = json.loads(path.read_text())["clips"][0]
-    assert after["speakers"] == ["Kemal"]
-    assert after["text"].startswith("Kemal: line 2")
+    assert after["speakers"] == ["Nora"]
+    assert after["text"].startswith("Nora: line 2")
     assert after["start_s"] == before["start_s"]
     assert not relabel_clips_file(path, {"NOBODY": "x"})
 
@@ -288,11 +288,11 @@ class TestApplyLabels:
         with patch("millet.summarize.is_backend_available", return_value=True), \
              patch("millet.summarize.summarize", return_value=fake), \
              patch("millet.transcribe.ensure_gpu_available", lambda *a, **k: None):
-            files = apply_labels(sdir, {"SPEAKER_00": "Kemal"}, regenerate_summary=True,
+            files = apply_labels(sdir, {"SPEAKER_00": "Nora"}, regenerate_summary=True,
                                  summary_template="video-clipping")
         assert files["clips"] == sdir / "01ABC.clips.json"
         doc = json.loads(files["clips"].read_text())
-        assert doc["clips"][0]["speakers"] == ["Kemal"]
+        assert doc["clips"][0]["speakers"] == ["Nora"]
         assert (sdir / "01ABC.video-clipping.md").exists()
 
     def test_other_templates_write_no_clips(self, tmp_path):
@@ -307,9 +307,9 @@ class TestApplyLabels:
     def test_relabel_without_regenerate_renames_inside_clips(self, tmp_path):
         sdir, segs = self._session(tmp_path)
         write_clips(_summary({"clips": [_clip(segs, 2, 5)]}), _txn(segs), sdir, "01ABC")
-        apply_labels(sdir, {"SPEAKER_00": "Kemal"}, regenerate_summary=False)
+        apply_labels(sdir, {"SPEAKER_00": "Nora"}, regenerate_summary=False)
         doc = json.loads((sdir / "01ABC.clips.json").read_text())
-        assert doc["clips"][0]["speakers"] == ["Kemal"]
+        assert doc["clips"][0]["speakers"] == ["Nora"]
 
     def test_clips_json_never_mistaken_for_transcript(self, tmp_path):
         # "<base>.clips.json" sorts before "<base>.json".  Use a session dir
@@ -574,10 +574,10 @@ class TestRelabelEdgeCases:
             {"speakers": ["A", "B"], "text": "A: hi\nB: yo\nno label here"},
             {"speakers": "A", "text": None},
         ]}))
-        assert relabel_clips_file(p, {"A": "Kemal", "B": "Kemal"})
+        assert relabel_clips_file(p, {"A": "Nora", "B": "Nora"})
         clip = json.loads(p.read_text())["clips"][1]
-        assert clip["speakers"] == ["Kemal"]
-        assert clip["text"] == "Kemal: hi\nKemal: yo\nno label here"
+        assert clip["speakers"] == ["Nora"]
+        assert clip["text"] == "Nora: hi\nNora: yo\nno label here"
 
     def test_relabel_failure_is_logged_not_raised(self, tmp_path):
         sdir = tmp_path / "01ABC"
@@ -585,7 +585,7 @@ class TestRelabelEdgeCases:
         _txn(_segs()).save(sdir, basename="01ABC")
         (sdir / "01ABC.clips.json").write_text("not json")
         logs: list[str] = []
-        apply_labels(sdir, {"SPEAKER_00": "Kemal"}, regenerate_summary=False,
+        apply_labels(sdir, {"SPEAKER_00": "Nora"}, regenerate_summary=False,
                      progress_callback=logs.append)
         assert any("Clip relabel failed" in m for m in logs)
 

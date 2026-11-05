@@ -124,12 +124,12 @@ class TestBuildFrontmatter:
 
     def test_crosstalk_is_never_a_participant(self):
         ctx = FrontmatterContext(
-            transcript_speakers=["Kemal", "CROSSTALK"],
+            transcript_speakers=["Nora", "CROSSTALK"],
             speaker_channels={"CROSSTALK": "system"},
         )
-        fm = build_frontmatter({"participants": ["crosstalk", "Lukas"]}, ctx)
+        fm = build_frontmatter({"participants": ["crosstalk", "Pia"]}, ctx)
         validate_frontmatter(fm)
-        assert [p["name"] for p in fm["participants"]] == ["Kemal", "Lukas"]
+        assert [p["name"] for p in fm["participants"]] == ["Nora", "Pia"]
 
     def test_with_extracted_data(self):
         ctx = FrontmatterContext(
