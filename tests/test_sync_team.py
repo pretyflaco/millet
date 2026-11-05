@@ -14,40 +14,40 @@ def home(monkeypatch, tmp_path):
 
 
 def test_per_team_config_roundtrip(home):
-    sync.save_sync_config({"repo_url": "https://example.com/blink.git"}, team="blink")
+    sync.save_sync_config({"repo_url": "https://example.com/team-a.git"}, team="team-a")
     sync.save_sync_config(
-        {"repo_url": "https://example.com/twentyone.git"}, team="twentyone"
+        {"repo_url": "https://example.com/team-b.git"}, team="team-b"
     )
 
-    blink = sync.load_sync_config(team="blink")
-    twentyone = sync.load_sync_config(team="twentyone")
-    assert blink["repo_url"].endswith("blink.git")
-    assert twentyone["repo_url"].endswith("twentyone.git")
+    team_a = sync.load_sync_config(team="team-a")
+    team_b = sync.load_sync_config(team="team-b")
+    assert team_a["repo_url"].endswith("team-a.git")
+    assert team_b["repo_url"].endswith("team-b.git")
 
     # Files live in separate per-team dirs.
-    assert (home / ".config" / "meet" / "blink" / "sync_config.json").exists()
-    assert (home / ".config" / "meet" / "twentyone" / "sync_config.json").exists()
+    assert (home / ".config" / "meet" / "team-a" / "sync_config.json").exists()
+    assert (home / ".config" / "meet" / "team-b" / "sync_config.json").exists()
     # The global file is untouched.
     assert not (home / ".config" / "meet" / "sync_config.json").exists()
 
 
 def test_is_sync_configured_per_team(home):
-    assert sync.is_sync_configured(team="blink") is False
-    sync.save_sync_config({"repo_url": "https://example.com/blink.git"}, team="blink")
-    assert sync.is_sync_configured(team="blink") is True
+    assert sync.is_sync_configured(team="team-a") is False
+    sync.save_sync_config({"repo_url": "https://example.com/team-a.git"}, team="team-a")
+    assert sync.is_sync_configured(team="team-a") is True
     # A different team is still unconfigured.
-    assert sync.is_sync_configured(team="twentyone") is False
+    assert sync.is_sync_configured(team="team-b") is False
 
 
 def test_clone_dir_namespaced_by_team(home):
     """Two teams pointing at same-named repos get distinct clone dirs."""
     url_a = "https://github.com/org-a/meetings.git"
     url_b = "https://github.com/org-b/meetings.git"
-    dir_a = sync._clone_dir_for(url_a, "blink")
-    dir_b = sync._clone_dir_for(url_b, "twentyone")
+    dir_a = sync._clone_dir_for(url_a, "team-a")
+    dir_b = sync._clone_dir_for(url_b, "team-b")
     assert dir_a != dir_b
-    assert dir_a.parent.name == "blink"
-    assert dir_b.parent.name == "twentyone"
+    assert dir_a.parent.name == "team-a"
+    assert dir_b.parent.name == "team-b"
     # Teamless keeps the flat layout.
     flat = sync._clone_dir_for(url_a, None)
     assert flat == sync.CLONE_BASE_DIR / "meetings"

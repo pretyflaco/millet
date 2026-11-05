@@ -144,7 +144,7 @@ did not clear the bar to become the default.
 3. **Baselines are historical**, not fresh re-runs: same prompts and
    temperature, but generated between 2026-05 and 2026-09 against whatever
    `claude-sonnet-4-6` resolved to then.
-4. **One baseline predates a prompt change.** `01KQZ561CR` (TR) was
+4. **One baseline predates a prompt change.** One Turkish meeting was
    summarized 2026-05-06, before the 2026-05-24 prompt edit. The other 9
    used prompts identical to the candidate runs; the default summary
    prompts have not changed since (v0.17.0 only *added* iteration-plan

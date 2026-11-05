@@ -446,7 +446,7 @@ def absorb_tiny_speakers(
     real conversation, not to name it.
 
     A small cluster holding a real sentence (:func:`is_dense_utterance`) is not
-    noise and is left for a human.  Incident 2026-11-02: in a 58 s phone
+    noise and is left for a human.  In a 58 s phone
     interview, the only segment pyannote split off for the second speaker
     (4.4 s, 21 words) was folded into the interviewer, so the session came back
     with one speaker.  Replaying 704 sessions, this keeps 6 tiny clusters raw.

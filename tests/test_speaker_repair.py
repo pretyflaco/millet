@@ -42,7 +42,7 @@ KEMAL, ROB, THIRD = _voice(1), _voice(2), _voice(3)
 
 
 def _interview(with_rob_cluster: bool):
-    """Shape of 01M6EV6Z: everything in SPEAKER_01, Rob's answers included."""
+    """Shape of the 58 s interview: everything in SPEAKER_01, Ravi's answers included."""
     spec = []
     for k in range(17):
         spec.append(("SPEAKER_01", KEMAL, 1.5))
@@ -193,7 +193,7 @@ class TestMonoTranscribeWiring:
             wf.writeframes(np.zeros(16000 * 3, dtype=np.int16).tobytes())
 
         asr = {"language": "en", "segments": [
-            {"start": 0.0, "end": 1.0, "text": "Hey Rob, how are you?"},
+            {"start": 0.0, "end": 1.0, "text": "Hey Ravi, how are you?"},
             {"start": 1.0, "end": 2.0, "text": "I'm doing well."},
         ]}
 
@@ -294,8 +294,8 @@ class TestEmbedSegments:
     def test_filters_and_embeds(self, monkeypatch):
         inf, audio = self._setup(monkeypatch)
         segs = [
-            Segment(0.0, 1.0, "a", "SPEAKER_00"),   # Kemal
-            Segment(1.0, 2.0, "b", "SPEAKER_00"),   # Rob
+            Segment(0.0, 1.0, "a", "SPEAKER_00"),   # Nora
+            Segment(1.0, 2.0, "b", "SPEAKER_00"),   # Ravi
             Segment(2.0, 3.0, "c", "SPEAKER_00"),   # silence: below RMS floor
             Segment(3.0, 3.3, "d", "SPEAKER_00"),   # too short
             Segment(3.0, 4.0, "e", None),           # unlabeled

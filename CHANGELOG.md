@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — neutral test fixtures
+
+* Tests use made-up team slugs (`team-a`, `team-b`), names and synthetic
+  session ids instead of real ones.  No behavior change.
+
 ## Unreleased — no deployment- or organization-specific references
 
 * Package author is `twentyone.ist`.

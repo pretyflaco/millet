@@ -320,7 +320,7 @@ class TestLabelSpeakersFromChannels:
         as a labeler contract: future tuning of either side (sidecar
         gain, labeler thresholds) must keep the Mac path working.
 
-        Calibration source: patternn's M6c.ii.b sign-off run
+        Calibration source: peggy's M6c.ii.b sign-off run
         (2026-05-14, meetscribe-record 0.2.0a1, Apple M1 / macOS
         26.4.1) reported ``you_ratio = 0.242``.  The synthetic
         amplitudes here reproduce that ratio: a sine-of-amplitude
@@ -1154,11 +1154,11 @@ class TestChannelCorrect:
     def test_noop_without_you_or_remote(self, tmp_path):
         """Correction is a no-op when there is no YOU+REMOTE pair."""
         wav = _write_stereo(tmp_path / "m.wav", [(0.0, 2.0, "mic")])
-        segs = [Segment(0.0, 2.0, "named", speaker="Kemal")]
+        segs = [Segment(0.0, 2.0, "named", speaker="Nora")]
         out, sp = _channel_correct_segments(
-            wav, segs, [Speaker(id="Kemal")], margin=0.30
+            wav, segs, [Speaker(id="Nora")], margin=0.30
         )
-        assert out[0].speaker == "Kemal"
+        assert out[0].speaker == "Nora"
 
 
 class TestCorrectMicBleedSegments:
@@ -1180,11 +1180,11 @@ class TestCorrectMicBleedSegments:
             Segment(0.0, 2.0, "genuine local", speaker="YOU"),
             Segment(2.0, 4.0, "bled remote", speaker="YOU"),
         ]
-        sys_segs = [Segment(2.0, 4.0, "remote speech", speaker="Openoms")]
+        sys_segs = [Segment(2.0, 4.0, "remote speech", speaker="Sam")]
         out = _correct_mic_bleed_segments(wav, mic_segs, sys_segs, margin=0.30)
         by_text = {s.text: s.speaker for s in out}
         assert by_text["genuine local"] == "YOU"
-        assert by_text["bled remote"] == "Openoms"  # reassigned, not dropped
+        assert by_text["bled remote"] == "Sam"  # reassigned, not dropped
 
     def test_bled_segment_without_overlap_uses_fallback(self, tmp_path):
         """A bled 'YOU' segment with no overlapping remote -> generic fallback."""
@@ -1211,11 +1211,11 @@ class TestCorrectMicBleedSegments:
             Segment(0.0, 3.0, "the servers now to control", speaker="YOU"),
         ]
         sys_segs = [
-            Segment(0.2, 3.2, "the servers now to control", speaker="Openoms"),
+            Segment(0.2, 3.2, "the servers now to control", speaker="Sam"),
         ]
         out = _correct_mic_bleed_segments(wav, mic_segs, sys_segs, margin=0.30)
         assert [(s.text, s.speaker) for s in out] == [
-            ("the servers now to control", "Openoms")
+            ("the servers now to control", "Sam")
         ]
 
     def test_empty_segment_dropped(self, tmp_path):
@@ -1384,7 +1384,7 @@ class TestIsolatedBackchannel:
         )
 
     def test_isolated_short_fragment_flagged(self):
-        # Mirrors the Kim case: tiny early fragments, then real speech 25 min on.
+        # Mirrors the Omar case: tiny early fragments, then real speech 25 min on.
         segs = [
             _seg(11.0, 11.5, "SPEAKER_02"),   # 0.5s, isolated
             _seg(53.5, 53.8, "SPEAKER_02"),   # 0.3s, isolated
