@@ -864,26 +864,26 @@ def _extract_mono(audio_file: Path, channel: int = 0) -> Path:
 # Cap in-memory stereo reuse to ~1 hour (16 kHz stereo int16 ≈ 230 MB) so
 # multi-hour recordings fall back to disk-backed per-channel temp WAVs.
 MAX_IN_MEMORY_STEREO_SECONDS = 3600
-# Bounded probe window (~11.5 MB int16 at 16 kHz stereo) used for
-# single-source stereo detection when a file exceeds the in-memory budget or
-# has unknown duration, so we never full-decode multi-hour files just to probe.
-SINGLE_SOURCE_PROBE_SECONDS = 180.0
+# Streaming read chunk for O(1)-memory single-source stereo analysis:
+# 10 s of 16 kHz stereo int16 = 640 KB per read.
+_STEREO_STREAM_CHUNK_BYTES = 16000 * 10 * 4
 
 
-def _decode_stereo_pcm_int16(
-    audio_file: Path,
-    *,
-    max_seconds: float | None = None,
-):
-    """Decode a stereo file (or its first *max_seconds*) to (left, right) int16 views."""
+def _load_stereo_int16(audio_file: Path):
+    """Decode a stereo file to (left, right) int16 numpy views via ffmpeg.
+
+    Returns ``(left, right)`` int16 arrays (half the memory of float32), or
+    ``None`` if decoding fails or numpy is unavailable.  Works for any
+    ffmpeg-readable format (wav, ogg, …).
+    """
     try:
         import numpy as np
     except ImportError:
         return None
-    cmd = ["ffmpeg", "-v", "error", "-i", str(audio_file)]
-    if max_seconds is not None and max_seconds > 0:
-        cmd.extend(["-t", f"{max_seconds:.3f}"])
-    cmd.extend(["-ac", "2", "-ar", "16000", "-f", "s16le", "-c:a", "pcm_s16le", "-"])
+    cmd = [
+        "ffmpeg", "-v", "error", "-i", str(audio_file),
+        "-ac", "2", "-ar", "16000", "-f", "s16le", "-c:a", "pcm_s16le", "-",
+    ]
     try:
         result = subprocess.run(cmd, capture_output=True)
     except Exception:
@@ -897,23 +897,153 @@ def _decode_stereo_pcm_int16(
     return data[:, 0], data[:, 1]
 
 
-def _load_stereo_int16(audio_file: Path):
-    """Decode a stereo file to (left, right) int16 numpy views via ffmpeg.
+class _StereoStatsAccumulator:
+    """Online exact active-RMS and Pearson-correlation accumulator (O(1) RAM).
 
-    Returns ``(left, right)`` int16 arrays (half the memory of float32), or
-    ``None`` if decoding fails or numpy is unavailable.  Works for any
-    ffmpeg-readable format (wav, ogg, …).
+    Uses Chan's parallel variance/covariance merge in float64 so streaming
+    10-second chunks across an arbitrarily long recording produces the exact
+    full-file RMS and correlation without buffering the full waveform.
     """
-    return _decode_stereo_pcm_int16(audio_file, max_seconds=None)
+
+    silence_thr: float = 50.0  # ~-50 dBFS for 16-bit (matches _mixdown_to_mono)
+
+    def __init__(self) -> None:
+        self.left_active_sum_sq: float = 0.0
+        self.left_active_n: int = 0
+        self.right_active_sum_sq: float = 0.0
+        self.right_active_n: int = 0
+        self.n: int = 0
+        self.mu_a: float = 0.0
+        self.mu_b: float = 0.0
+        self.m2_a: float = 0.0
+        self.m2_b: float = 0.0
+        self.c_ab: float = 0.0
+
+    def update(self, left: Any, right: Any) -> None:
+        import numpy as np
+
+        m = min(int(left.size), int(right.size))
+        if m <= 0:
+            return
+        a = left[:m].astype(np.float64, copy=False)
+        b = right[:m].astype(np.float64, copy=False)
+
+        la = a[np.abs(a) > self.silence_thr]
+        if la.size:
+            self.left_active_sum_sq += float(np.dot(la, la))
+            self.left_active_n += int(la.size)
+        ra = b[np.abs(b) > self.silence_thr]
+        if ra.size:
+            self.right_active_sum_sq += float(np.dot(ra, ra))
+            self.right_active_n += int(ra.size)
+
+        mean_a = float(a.mean())
+        mean_b = float(b.mean())
+        da = a - mean_a
+        db = b - mean_b
+        chunk_m2_a = float(np.dot(da, da))
+        chunk_m2_b = float(np.dot(db, db))
+        chunk_c_ab = float(np.dot(da, db))
+
+        if self.n == 0:
+            self.n = m
+            self.mu_a = mean_a
+            self.mu_b = mean_b
+            self.m2_a = chunk_m2_a
+            self.m2_b = chunk_m2_b
+            self.c_ab = chunk_c_ab
+        else:
+            new_n = self.n + m
+            delta_a = mean_a - self.mu_a
+            delta_b = mean_b - self.mu_b
+            weight = (self.n * m) / new_n
+            self.mu_a += delta_a * (m / new_n)
+            self.mu_b += delta_b * (m / new_n)
+            self.m2_a += chunk_m2_a + delta_a * delta_a * weight
+            self.m2_b += chunk_m2_b + delta_b * delta_b * weight
+            self.c_ab += chunk_c_ab + delta_a * delta_b * weight
+            self.n = new_n
+
+    def finalize(self) -> tuple[float, float, int, float | None]:
+        """Return ``(left_rms, right_rms, total_frames, pearson_corr_or_none)``."""
+        import math
+
+        left_rms = (
+            math.sqrt(self.left_active_sum_sq / self.left_active_n)
+            if self.left_active_n > 0
+            else 0.0
+        )
+        right_rms = (
+            math.sqrt(self.right_active_sum_sq / self.right_active_n)
+            if self.right_active_n > 0
+            else 0.0
+        )
+        corr: float | None = None
+        if self.n >= 16000:
+            std_a = math.sqrt(max(0.0, self.m2_a / self.n))
+            std_b = math.sqrt(max(0.0, self.m2_b / self.n))
+            if std_a > 1e-6 and std_b > 1e-6:
+                denom = math.sqrt(max(0.0, self.m2_a * self.m2_b))
+                if denom > 0.0:
+                    corr = self.c_ab / denom
+        return left_rms, right_rms, self.n, corr
 
 
-def _load_stereo_probe_int16(
+def _stream_stereo_stats(
     audio_file: Path,
     *,
-    max_seconds: float = SINGLE_SOURCE_PROBE_SECONDS,
-):
-    """Decode at most *max_seconds* of stereo audio for bounded channel probing."""
-    return _decode_stereo_pcm_int16(audio_file, max_seconds=max_seconds)
+    chunk_bytes: int = _STEREO_STREAM_CHUNK_BYTES,
+) -> tuple[float, float, int, float | None] | None:
+    """Compute full-file stereo active RMS and correlation in O(1) memory."""
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    cmd = [
+        "ffmpeg", "-v", "error", "-i", str(audio_file),
+        "-ac", "2", "-ar", "16000", "-f", "s16le", "-c:a", "pcm_s16le", "-",
+    ]
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
+    except Exception:
+        return None
+
+    acc = _StereoStatsAccumulator()
+    carry = b""
+    try:
+        assert proc.stdout is not None
+        while True:
+            raw = proc.stdout.read(chunk_bytes)
+            if not raw:
+                break
+            buf = carry + raw if carry else raw
+            usable = (len(buf) // 4) * 4
+            carry = buf[usable:]
+            if usable >= 4:
+                samples = np.frombuffer(buf[:usable], dtype=np.int16).reshape(-1, 2)
+                acc.update(samples[:, 0], samples[:, 1])
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return None
+    finally:
+        if proc.stdout is not None:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+        try:
+            rc = proc.wait()
+        except Exception:
+            rc = 1
+
+    if rc != 0 or acc.n == 0:
+        return None
+    return acc.finalize()
 
 
 def _is_single_source_stereo(
@@ -921,7 +1051,6 @@ def _is_single_source_stereo(
     config,
     *,
     chans: tuple[Any, Any] | None = None,
-    max_probe_seconds: float = SINGLE_SOURCE_PROBE_SECONDS,
 ) -> bool:
     """True if a stereo recording is effectively single-source.
 
@@ -938,28 +1067,32 @@ def _is_single_source_stereo(
     In either case the caller should fall back to the mono path so the
     combined-signal diarization can split multiple in-room speakers.
 
+    When *chans* is ``None`` (e.g. over-budget or unknown-duration files),
+    streams the full file in constant memory so late system-channel activation
+    or late channel divergence is always seen without buffering the waveform.
+
     Conservative on failure: returns False (keep dual-diarize) if the audio
     can't be analyzed, so genuine remote calls are never mis-routed.
     """
-    if chans is None:
-        chans = _load_stereo_probe_int16(audio_file, max_seconds=max_probe_seconds)
-    if chans is None:
+    if chans is not None:
+        try:
+            import numpy as np  # noqa: F401
+        except ImportError:
+            return False
+        left, right = chans
+        acc = _StereoStatsAccumulator()
+        acc.update(left, right)
+        stats: tuple[float, float, int, float | None] | None = (
+            acc.finalize() if acc.n > 0 else None
+        )
+    else:
+        stats = _stream_stereo_stats(audio_file)
+
+    if stats is None:
         return False
-    try:
-        import numpy as np
-    except ImportError:
-        return False
-    left, right = chans
+    left_rms, right_rms, _n, corr = stats
 
     # ── System-channel inactivity (per-channel active-sample RMS) ──
-    silence_thr = 50.0  # ~-50 dBFS for 16-bit (matches _mixdown_to_mono)
-    left_abs = np.abs(left.astype(np.float32, copy=False))
-    right_abs = np.abs(right.astype(np.float32, copy=False))
-    left_active = left_abs[left_abs > silence_thr]
-    right_active = right_abs[right_abs > silence_thr]
-    left_rms = float(np.sqrt(np.mean(left_active**2))) if left_active.size else 0.0
-    right_rms = float(np.sqrt(np.mean(right_active**2))) if right_active.size else 0.0
-    del left_abs, right_abs, left_active, right_active
     if left_rms > 0.0:
         if right_rms <= config.system_inactive_rms_ratio * left_rms:
             return True
@@ -968,14 +1101,8 @@ def _is_single_source_stereo(
         return True
 
     # ── Near-duplicate channels (Pearson correlation) ──
-    n = min(left.size, right.size)
-    if n >= 16000:  # at least ~1 s at 16 kHz before trusting correlation
-        a = left[:n]
-        b = right[:n]
-        if a.std() > 1e-6 and b.std() > 1e-6:
-            corr = float(np.corrcoef(a, b)[0, 1])
-            if corr >= config.channel_duplicate_corr:
-                return True
+    if corr is not None and corr >= config.channel_duplicate_corr:
+        return True
     return False
 
 
@@ -2401,9 +2528,9 @@ def transcribe(
 
     if is_stereo and config.use_dual_channel and config.mixdown == "dual-diarize":
         # Decode stereo ONCE (as int16) ONLY when duration is known and within
-        # the memory budget.  Over-budget and unknown-duration files use a
-        # bounded prefix probe for single-source detection and disk-backed
-        # per-channel temp WAVs for ASR/diarization.
+        # the memory budget.  Over-budget and unknown-duration files stream the
+        # full file in O(1) memory for single-source detection and use
+        # disk-backed per-channel temp WAVs for ASR/diarization.
         within_mem_budget = bool(duration and 0 < duration <= MAX_IN_MEMORY_STEREO_SECONDS)
         stereo_chans = _load_stereo_int16(audio_path) if within_mem_budget else None
         # The dual-diarize path treats the mic channel as a single local

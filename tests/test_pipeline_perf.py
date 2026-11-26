@@ -183,15 +183,11 @@ def test_transcribe_over_budget_and_unknown_duration_skip_full_stereo_decode(
     def _forbid_full_decode(_path: Path):
         raise AssertionError("_load_stereo_int16 must not be called over budget / unknown duration")
 
-    probe_calls: list[tuple[Path, float]] = []
+    stream_calls: list[Path] = []
 
-    def _fake_probe(path: Path, *, max_seconds: float = tr_mod.SINGLE_SOURCE_PROBE_SECONDS):
-        probe_calls.append((path, max_seconds))
-        # Return two distinct non-silent channels -> dual-source (not single-source).
-        t = np.linspace(0, 2.0, 32000, dtype=np.float32)
-        left = (np.sin(2 * np.pi * 220 * t) * 5000).astype(np.int16)
-        right = (np.sin(2 * np.pi * 660 * t) * 5000).astype(np.int16)
-        return left, right
+    def _fake_stream_stats(path: Path, **_kw):
+        stream_calls.append(path)
+        return (3500.0, 3500.0, 32000, 0.05)
 
     seen_stereo_chans: list[object] = []
 
@@ -205,7 +201,7 @@ def test_transcribe_over_budget_and_unknown_duration_skip_full_stereo_decode(
         )
 
     monkeypatch.setattr(tr_mod, "_load_stereo_int16", _forbid_full_decode)
-    monkeypatch.setattr(tr_mod, "_load_stereo_probe_int16", _fake_probe)
+    monkeypatch.setattr(tr_mod, "_stream_stereo_stats", _fake_stream_stats)
     monkeypatch.setattr(tr_mod, "_transcribe_dual_diarize", _fake_dual_diarize)
     monkeypatch.setattr(tr_mod, "_is_stereo", lambda _p: True)
 
@@ -219,31 +215,128 @@ def test_transcribe_over_budget_and_unknown_duration_skip_full_stereo_decode(
         )
         tr_mod.transcribe(fake_audio, cfg)
 
-    assert len(probe_calls) == 3
-    assert all(s == tr_mod.SINGLE_SOURCE_PROBE_SECONDS for _, s in probe_calls)
+    assert len(stream_calls) == 3
     assert seen_stereo_chans == [None, None, None]
 
 
-def test_load_stereo_probe_int16_passes_duration_cap_to_ffmpeg(tmp_path: Path, monkeypatch):
+class _FakePipePopen:
+    """In-memory Popen stub streaming interleaved s16le chunks in O(1) RAM."""
+
+    def __init__(self, chunks: list[bytes], returncode: int = 0) -> None:
+        self._chunks = list(chunks)
+        self._idx = 0
+        self._buf = b""
+        self._rc = returncode
+        self.stdout = self
+
+    def read(self, size: int = -1) -> bytes:
+        while len(self._buf) < size and self._idx < len(self._chunks):
+            self._buf += self._chunks[self._idx]
+            self._idx += 1
+        if size < 0 or len(self._buf) <= size:
+            out, self._buf = self._buf, b""
+            return out
+        out, self._buf = self._buf[:size], self._buf[size:]
+        return out
+
+    def close(self) -> None:
+        pass
+
+    def kill(self) -> None:
+        pass
+
+    def wait(self) -> int:
+        return self._rc
+
+
+def _interleave_i16(left: np.ndarray, right: np.ndarray) -> bytes:
+    out = np.empty(left.size * 2, dtype="<i2")
+    out[0::2] = left.astype("<i2")
+    out[1::2] = right.astype("<i2")
+    return out.tobytes()
+
+
+def test_stream_single_source_detects_late_system_audio_and_late_divergence(
+    tmp_path: Path, monkeypatch
+):
+    """Streaming stats must see system audio and channel divergence after minute 3."""
     import subprocess
 
-    fake_audio = tmp_path / "call.ogg"
+    fake_audio = tmp_path / "long_meeting.ogg"
     fake_audio.write_bytes(b"OggS")
-    cmds: list[list[str]] = []
+    sr = 16000
+    t_10s = np.linspace(0, 10.0, sr * 10, dtype=np.float32)
+    mic_10s = (np.sin(2 * np.pi * 220 * t_10s) * 4000).astype(np.int16)
+    sys_10s = (np.sin(2 * np.pi * 550 * t_10s) * 4000).astype(np.int16)
+    silent_10s = np.zeros(sr * 10, dtype=np.int16)
 
-    def _fake_run(cmd, capture_output=False):
-        cmds.append(list(cmd))
+    # Case 1: 200 s (20 x 10 s) of active mic + silent system, then 20 s of active
+    # remote speech (well past any 180 s prefix window).
+    silent_pair = _interleave_i16(mic_10s, silent_10s)
+    active_pair = _interleave_i16(mic_10s, sys_10s)
+    late_sys_chunks = [silent_pair] * 20 + [active_pair] * 2
 
-        class _R:
-            returncode = 0
-            stdout = np.zeros(40, dtype="<i2").tobytes()
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *_a, **_kw: _FakePipePopen(late_sys_chunks),
+    )
+    assert tr_mod._is_single_source_stereo(fake_audio, tr_mod.TranscriptionConfig()) is False
 
-        return _R()
+    # Case 2: 200 s of identical L/R (dual-mono), followed by 40 s of independent L/R
+    # so overall correlation drops well below channel_duplicate_corr (0.95).
+    dup_pair = _interleave_i16(mic_10s, mic_10s)
+    late_div_chunks = [dup_pair] * 20 + [active_pair] * 4
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
-    res = tr_mod._load_stereo_probe_int16(fake_audio, max_seconds=45.0)
-    assert res is not None
-    assert len(cmds) == 1
-    assert "-t" in cmds[0]
-    assert cmds[0][cmds[0].index("-t") + 1] == "45.000"
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *_a, **_kw: _FakePipePopen(late_div_chunks),
+    )
+    assert tr_mod._is_single_source_stereo(fake_audio, tr_mod.TranscriptionConfig()) is False
+
+    # Case 3: Entire 220 s is identical L/R -> truly single-source (True).
+    all_dup_chunks = [dup_pair] * 22
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *_a, **_kw: _FakePipePopen(all_dup_chunks),
+    )
+    assert tr_mod._is_single_source_stereo(fake_audio, tr_mod.TranscriptionConfig()) is True
+
+
+def test_stream_stereo_stats_matches_in_memory_with_unaligned_pipe_reads(
+    tmp_path: Path, monkeypatch
+):
+    """Online Chan merge matches full-array RMS/correlation even with unaligned reads."""
+    import subprocess
+
+    rng = np.random.default_rng(42)
+    n = 48000  # 3 seconds
+    left = rng.integers(-8000, 8000, size=n, dtype=np.int16)
+    right = (0.6 * left.astype(np.float64) + rng.normal(0, 2000, size=n)).clip(
+        -32768, 32767
+    ).astype(np.int16)
+    raw = _interleave_i16(left, right)
+
+    # Deliberately awkward odd-sized read chunks (1001 bytes) to test carry handling.
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *_a, **_kw: _FakePipePopen([raw]),
+    )
+    stats = tr_mod._stream_stereo_stats(tmp_path / "x.ogg", chunk_bytes=1001)
+    assert stats is not None
+    l_rms, r_rms, total_n, corr = stats
+
+    lf = left.astype(np.float64)
+    rf = right.astype(np.float64)
+    exp_l = float(np.sqrt(np.mean(lf[np.abs(lf) > 50.0] ** 2)))
+    exp_r = float(np.sqrt(np.mean(rf[np.abs(rf) > 50.0] ** 2)))
+    exp_corr = float(np.corrcoef(lf, rf)[0, 1])
+
+    assert total_n == n
+    assert abs(l_rms - exp_l) < 1e-6
+    assert abs(r_rms - exp_r) < 1e-6
+    assert corr is not None and abs(corr - exp_corr) < 1e-6
 
