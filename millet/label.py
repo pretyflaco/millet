@@ -732,17 +732,18 @@ def apply_labels(
                         f"{summary_result.elapsed_seconds:.1f}s"
                     )
             else:
-                _log(_backend_not_available_message(summary_config))
+                msg = _backend_not_available_message(summary_config)
+                _log(msg)
+                if summary_preset or apply_vocabulary:
+                    raise RuntimeError(msg)
                 # Fall back to find-and-replace
                 regenerate_summary = False
         except Exception as exc:
             _log(f"Summary regeneration failed: {exc}")
-            if summary_preset:
-                # Preset was explicitly requested — user chose a specific
-                # privacy/quality level.  Mirror the post_process() contract
-                # in transcribe.py: surface the failure as an exception so
-                # callers (vezir, automation) can react.  Standalone callers
-                # that don't pass summary_preset keep the silent-skip behavior.
+            if summary_preset or apply_vocabulary:
+                # Explicit preset or vocabulary regeneration must fail loudly so
+                # callers (vezir, automation) never mistake an unchanged summary
+                # for a completed regeneration.
                 raise
             regenerate_summary = False
 

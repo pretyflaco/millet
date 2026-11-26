@@ -861,11 +861,17 @@ def _extract_mono(audio_file: Path, channel: int = 0) -> Path:
     return Path(tmp.name)
 
 
-def _load_stereo_int16(audio_file: Path):
-    """Decode a stereo file to (left, right) int16 numpy arrays via ffmpeg.
+# Cap in-memory stereo reuse to ~1 hour (16 kHz stereo int16 ≈ 230 MB) so
+# multi-hour recordings fall back to disk-backed per-channel temp WAVs.
+MAX_IN_MEMORY_STEREO_SECONDS = 3600
 
-    Returns ``(left, right)`` float32 arrays, or ``None`` if decoding fails or
-    numpy is unavailable.  Works for any ffmpeg-readable format (wav, ogg, …).
+
+def _load_stereo_int16(audio_file: Path):
+    """Decode a stereo file to (left, right) int16 numpy views via ffmpeg.
+
+    Returns ``(left, right)`` int16 arrays (half the memory of float32), or
+    ``None`` if decoding fails or numpy is unavailable.  Works for any
+    ffmpeg-readable format (wav, ogg, …).
     """
     try:
         import numpy as np
@@ -884,7 +890,7 @@ def _load_stereo_int16(audio_file: Path):
     data = np.frombuffer(result.stdout, dtype=np.int16)
     if data.size < 2:
         return None
-    data = data[: (data.size // 2) * 2].reshape(-1, 2).astype(np.float32)
+    data = data[: (data.size // 2) * 2].reshape(-1, 2)
     return data[:, 0], data[:, 1]
 
 
@@ -924,10 +930,13 @@ def _is_single_source_stereo(
 
     # ── System-channel inactivity (per-channel active-sample RMS) ──
     silence_thr = 50.0  # ~-50 dBFS for 16-bit (matches _mixdown_to_mono)
-    left_active = left[np.abs(left) > silence_thr]
-    right_active = right[np.abs(right) > silence_thr]
+    left_abs = np.abs(left.astype(np.float32, copy=False))
+    right_abs = np.abs(right.astype(np.float32, copy=False))
+    left_active = left_abs[left_abs > silence_thr]
+    right_active = right_abs[right_abs > silence_thr]
     left_rms = float(np.sqrt(np.mean(left_active**2))) if left_active.size else 0.0
     right_rms = float(np.sqrt(np.mean(right_active**2))) if right_active.size else 0.0
+    del left_abs, right_abs, left_active, right_active
     if left_rms > 0.0:
         if right_rms <= config.system_inactive_rms_ratio * left_rms:
             return True
@@ -1009,7 +1018,8 @@ def _mixdown_to_mono(audio_file: Path) -> Path:
         # 16 kHz stereo PCM via ffmpeg so it still gets RMS-balanced mixdown.
         decoded = _load_stereo_int16(audio_file)
         if decoded is not None:
-            left, right = decoded
+            left = decoded[0].astype(np.float32)
+            right = decoded[1].astype(np.float32)
             framerate = 16000
 
     if left is None or right is None:
@@ -1335,10 +1345,7 @@ def _transcribe_dual_channel(
     asr_model = None
 
     try:
-        if stereo_chans is not None:
-            mic_audio = (stereo_chans[0] / 32768.0).astype(np.float32)
-            sys_audio = (stereo_chans[1] / 32768.0).astype(np.float32)
-        else:
+        if stereo_chans is None:
             mic_path = _extract_mono(audio_file, channel=0)
             sys_path = _extract_mono(audio_file, channel=1)
 
@@ -1354,7 +1361,10 @@ def _transcribe_dual_channel(
 
         # ── Mic channel: detect → bias → transcribe with that language ──
         print("  Transcribing mic channel (left)...")
-        if stereo_chans is None:
+        if stereo_chans is not None:
+            mic_audio = stereo_chans[0].astype(np.float32)
+            mic_audio *= np.float32(1.0 / 32768.0)
+        else:
             mic_audio = whisperx.load_audio(str(mic_path))
         if pad_samples > 0:
             mic_audio = np.concatenate(
@@ -1369,7 +1379,10 @@ def _transcribe_dual_channel(
 
         # ── System channel: detect → bias → transcribe ──
         print("  Transcribing system channel (right)...")
-        if stereo_chans is None:
+        if stereo_chans is not None:
+            sys_audio = stereo_chans[1].astype(np.float32)
+            sys_audio *= np.float32(1.0 / 32768.0)
+        else:
             sys_audio = whisperx.load_audio(str(sys_path))
         if pad_samples > 0:
             sys_audio = np.concatenate(
@@ -2081,10 +2094,7 @@ def _transcribe_dual_diarize(
     asr_model = None
 
     try:
-        if stereo_chans is not None:
-            mic_audio = (stereo_chans[0] / 32768.0).astype(np.float32)
-            sys_audio = (stereo_chans[1] / 32768.0).astype(np.float32)
-        else:
+        if stereo_chans is None:
             mic_path = _extract_mono(audio_file, channel=0)
             sys_path = _extract_mono(audio_file, channel=1)
 
@@ -2104,7 +2114,10 @@ def _transcribe_dual_diarize(
         # default-language bias is applied to the per-channel language so a
         # low-confidence minority detection is overridden by the default.
         print("  Transcribing mic channel (left / YOU)...")
-        if stereo_chans is None:
+        if stereo_chans is not None:
+            mic_audio = stereo_chans[0].astype(np.float32)
+            mic_audio *= np.float32(1.0 / 32768.0)
+        else:
             mic_audio = whisperx.load_audio(str(mic_path))
         if pad_samples > 0:
             mic_audio = np.concatenate(
@@ -2119,7 +2132,10 @@ def _transcribe_dual_diarize(
 
         # ── System channel (remotes): detect → bias → transcribe ──
         print("  Transcribing system channel (right / remotes)...")
-        if stereo_chans is None:
+        if stereo_chans is not None:
+            sys_audio = stereo_chans[1].astype(np.float32)
+            sys_audio *= np.float32(1.0 / 32768.0)
+        else:
             sys_audio = whisperx.load_audio(str(sys_path))
         if pad_samples > 0:
             sys_audio = np.concatenate(
@@ -2174,6 +2190,8 @@ def _transcribe_dual_diarize(
             torch,
             whisperx,
         )
+        # Release the normalized mic float32 buffer before loading pyannote.
+        del mic_audio
 
         # ── Diarize system channel (split remotes) ──
         if config.hf_token:
@@ -2359,10 +2377,11 @@ def transcribe(
     single_source = False
 
     if is_stereo and config.use_dual_channel and config.mixdown == "dual-diarize":
-        # Decode stereo ONCE and reuse the in-memory channels for single-source
-        # detection, dual-channel ASR, and mic-bleed correction (avoids 6+ full
-        # ffmpeg decodes and temp WAV files per meeting).
-        stereo_chans = _load_stereo_int16(audio_path)
+        # Decode stereo ONCE (as int16) for sessions within the memory budget
+        # and reuse for single-source detection, dual-channel ASR, and mic-bleed
+        # correction.  Multi-hour sessions fall back to disk-backed temp WAVs.
+        within_mem_budget = not duration or duration <= MAX_IN_MEMORY_STEREO_SECONDS
+        stereo_chans = _load_stereo_int16(audio_path) if within_mem_budget else None
         # The dual-diarize path treats the mic channel as a single local
         # speaker.  For an in-room recording (multiple people share the mic,
         # system channel silent or a duplicate of the mic) that collapses
@@ -2371,6 +2390,7 @@ def transcribe(
         if config.single_source_fallback and _is_single_source_stereo(
             audio_path, config, chans=stereo_chans
         ):
+            stereo_chans = None
             single_source = True
             print(
                 "  Single-source stereo detected (system channel inactive or "
@@ -2726,8 +2746,10 @@ def _seg_channel_ratio(mic, sys_, start_t, end_t, sr, n):
     end = max(0, min(int((end_t if end_t is not None else start_t) * sr), n))
     if end <= start:
         return None
-    mic_rms = float(np.sqrt(np.mean(mic[start:end] ** 2)))
-    sys_rms = float(np.sqrt(np.mean(sys_[start:end] ** 2)))
+    mic_win = mic[start:end].astype(np.float32, copy=False)
+    sys_win = sys_[start:end].astype(np.float32, copy=False)
+    mic_rms = float(np.sqrt(np.mean(mic_win ** 2)))
+    sys_rms = float(np.sqrt(np.mean(sys_win ** 2)))
     denom = mic_rms + sys_rms
     if denom < 1e-8:
         return None

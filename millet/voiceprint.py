@@ -326,20 +326,27 @@ def _l2_norm(v: np.ndarray) -> np.ndarray:
 
 # ─── Embedding extraction ─────────────────────────────────────────────────────
 
-# Cache the decoded channels for the most recently accessed file only.  The
-# identify/enroll/update loops call _extract_channel_audio once per speaker but
-# there are only two distinct channels; without this each of N speakers
-# triggered a full-file ffmpeg decode (hundreds of MB for an hour of audio).
-# Scoped to one file so it never accumulates across sessions.
+# Cache the decoded channels for the most recently accessed file only, subject
+# to a sample-count ceiling (~1 hour at 16 kHz = ~230 MB per channel in float32)
+# so very long sessions do not pin multi-GB arrays in module globals.
 _CHANNEL_CACHE_KEY: tuple[str, float] | None = None
 _CHANNEL_CACHE: dict[str, tuple[np.ndarray, int] | None] = {}
+MAX_CHANNEL_CACHE_SAMPLES = 16000 * 3600
+
+
+def clear_channel_cache() -> None:
+    """Release any cached decoded channel audio."""
+    global _CHANNEL_CACHE_KEY, _CHANNEL_CACHE
+    _CHANNEL_CACHE_KEY = None
+    _CHANNEL_CACHE = {}
 
 
 def _extract_channel_audio(audio_path: Path, channel: str) -> tuple[np.ndarray, int] | None:
     """Extract a single audio channel as float32 array.
 
-    Decodes at most once per (file, channel); repeated calls for the same file
-    and channel return the cached array.
+    Decodes at most once per (file, channel) for sessions within
+    ``MAX_CHANNEL_CACHE_SAMPLES``; repeated calls for the same file and channel
+    return the cached array.
 
     Args:
         audio_path: Path to stereo audio file.
@@ -370,12 +377,18 @@ def _extract_channel_audio(audio_path: Path, channel: str) -> tuple[np.ndarray, 
         stereo = _decode_stereo_channels_16k(audio_path)
         if stereo is not None:
             mic_s, sys_s = stereo
-            _CHANNEL_CACHE["mic"] = (mic_s, 16000)
-            _CHANNEL_CACHE["system"] = (sys_s, 16000)
-            return _CHANNEL_CACHE[channel]
+            chosen = (mic_s, 16000) if channel == "mic" else (sys_s, 16000)
+            if mic_s.size <= MAX_CHANNEL_CACHE_SAMPLES:
+                _CHANNEL_CACHE["mic"] = (mic_s, 16000)
+                _CHANNEL_CACHE["system"] = (sys_s, 16000)
+            return chosen
 
     result = _decode_channel_audio(audio_path, channel)
-    if key is not None:
+    if (
+        key is not None
+        and result is not None
+        and result[0].size <= MAX_CHANNEL_CACHE_SAMPLES
+    ):
         _CHANNEL_CACHE[channel] = result
     return result
 
@@ -403,9 +416,14 @@ def _decode_stereo_channels_16k(
         usable = (len(raw) // 2) * 2
         if usable < 2:
             return None
-        stereo = raw[:usable].reshape(-1, 2).astype(np.float32)
-        stereo /= 32768.0
-        return stereo[:, 0].copy(), stereo[:, 1].copy()
+        # Convert each strided int16 channel directly to float32 in-place to
+        # avoid allocating a 2x interleaved float32 intermediate buffer.
+        scale = np.float32(1.0 / 32768.0)
+        mic = raw[0:usable:2].astype(np.float32)
+        mic *= scale
+        sys_ch = raw[1:usable:2].astype(np.float32)
+        sys_ch *= scale
+        return mic, sys_ch
     except Exception as exc:
         log.debug("Stereo channel audio extraction failed: %s", exc)
         return None
