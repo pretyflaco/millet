@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.25.0 — read-only historical vocabulary harvesting
+
+### Added
+
+- Add `millet vocab harvest` for private, read-only mining of historical
+  transcripts into a human-review report. Supports `--sessions-file`,
+  `--anchors`, `--rejected`, `--since`, and atomic 0600 `--output` reports.
+- Add `millet vocab dry-run` for previewing deterministic alias replacements
+  across historical transcripts without modifying them.
+- Collect canonical anchors from existing vocabulary, enrolled speakers,
+  session titles, and optional text/JSON/Markdown anchor files.
+- Split sessions deterministically into seed and held-out sets, verify every
+  proposed span against the actual transcript, exclude `CROSSTALK` and JSON
+  sidecars, and attach grounded before/after examples.
+- Route common/ambiguous words to Layer 1+3 rather than hard regex aliases,
+  filter rejected pairs, and downgrade chain or duplicate-alias conflicts.
+- Enforce private-only `tinfoil`/`ollama` backends with delimiter-escaped
+  `<known_terms>` / `<transcript_excerpt>` prompts. Total LLM failure raises
+  loudly; partial reports remain available after a successful call.
+- Suppress already-satisfied term/glossary layers on subsequent harvests while
+  preserving genuinely new alias suggestions for existing canonical terms.
+
+### Tests
+
+- Focused no-torch/no-GTK CI selection: **533 passed** on each supported Python
+  version.
+- Covers prompt escaping, hallucinated-span rejection, holdout behavior,
+  sidecar exclusion, rejection filtering, total and partial backend failure,
+  second-harvest suppression, dry-run diffs, and report permissions.
+
 ## v0.24.0 — domain vocabulary and pipeline performance
 
 ### Added
