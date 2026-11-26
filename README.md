@@ -282,9 +282,13 @@ Options:
   `parakeet`. On Apple Silicon with `mlx-whisper` installed, `auto` uses MLX
   Whisper for ASR. MLX only replaces the transcription step; millet still
   requires WhisperX for audio loading, alignment, and diarization. `parakeet`
-  uses NVIDIA Parakeet ONNX (English; install with `pip install
+  uses NVIDIA Parakeet ONNX (install with `pip install
   'millet-pipeline[parakeet]'`); see `--parakeet-model` /
-  `--parakeet-keep-alignment`.
+  `--parakeet-keep-alignment`. The default model is English-only; for other
+  European languages pick `--parakeet-model nemo-parakeet-tdt-0.6b-v3` and
+  pass `-l <code>` (Parakeet does not detect the language). Also available
+  on `millet run` and `millet gui` (the GUI has a "Parakeet model" field
+  under Advanced).
 - `--mlx-model <repo-or-path>` -- MLX Whisper model path/repo (default: maps
   `large-v3-turbo` to `mlx-community/whisper-large-v3-turbo`)
 - `--device cuda` -- `cuda` or `cpu`. Default: auto-detected — `cpu` on
@@ -786,7 +790,8 @@ them (e.g. before an offline session) with `millet download`:
 millet download            # show cache status for all supported languages
 millet download de tr fa   # download German, Turkish, Farsi alignment models
 millet download --all      # download every supported alignment model
-millet download parakeet   # download the Parakeet ASR model (English)
+millet download parakeet   # download the Parakeet ASR model (v2, English)
+millet download parakeet --parakeet-model nemo-parakeet-tdt-0.6b-v3  # multilingual
 ```
 
 It exits non-zero if any requested download fails, so it's safe to script.

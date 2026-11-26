@@ -13,14 +13,23 @@ import click
     default=False,
     help="Download alignment models for all supported languages",
 )
-def download(languages, download_all):
+@click.option(
+    "--parakeet-model",
+    type=str,
+    default=None,
+    help="With 'parakeet': onnx-asr model to fetch (default: "
+    "nemo-parakeet-tdt-0.6b-v2, English only; nemo-parakeet-tdt-0.6b-v3 "
+    "is multilingual)",
+)
+def download(languages, download_all, parakeet_model):
     """Download alignment models for specified languages.
 
     \b
     Examples:
         meet download de tr fa    # download German, Turkish, Farsi
         meet download --all       # download all supported models
-        meet download parakeet    # download the Parakeet ASR model (English)
+        meet download parakeet    # download the Parakeet ASR model (v2, English)
+        meet download parakeet --parakeet-model nemo-parakeet-tdt-0.6b-v3
     """
     from millet.transcribe import (
         download_alignment_model,
@@ -33,11 +42,12 @@ def download(languages, download_all):
     if "parakeet" in languages:
         from millet.parakeet import download_parakeet, ensure_parakeet_cached
 
-        if ensure_parakeet_cached():
+        if ensure_parakeet_cached(parakeet_model):
             click.echo("  Parakeet model: already cached, skipping.")
         else:
             try:
                 download_parakeet(
+                    parakeet_model,
                     progress_callback=lambda msg: click.echo(f"  {msg}")
                 )
             except Exception as exc:

@@ -15,9 +15,11 @@ Key constraints handled here:
   results with *global* timestamps already stitched.  This is mandatory for
   our 45-105 minute recordings.
 
-* **English-only (for now).** We default to ``nemo-parakeet-tdt-0.6b-v2``
-  (the English model).  The multilingual v3 is reachable by overriding the
-  model name, but v2 is the benchmark target.
+* **English by default.** We default to ``nemo-parakeet-tdt-0.6b-v2``
+  (the English-only model, the benchmark target).  The multilingual
+  ``nemo-parakeet-tdt-0.6b-v3`` is selected by name (``--parakeet-model``
+  or the GUI's Parakeet model field).  Parakeet does not detect the
+  language, so pass ``--language`` for non-English meetings.
 
 * **Lazy, explicit model fetch.** ``millet download parakeet`` pre-fetches
   the ONNX weights to the HF cache; we never auto-download inside

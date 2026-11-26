@@ -42,15 +42,32 @@ from ._helpers import (
 )
 @click.option(
     "--asr-backend",
-    type=click.Choice(["auto", "whisperx", "mlx"]),
+    type=click.Choice(["auto", "whisperx", "mlx", "parakeet"]),
     default="auto",
-    help="ASR backend: auto, whisperx, or mlx (default: auto)",
+    help="ASR backend: auto, whisperx, mlx, or parakeet (default: auto). "
+    "parakeet = NVIDIA Parakeet via onnx-asr (needs "
+    "'millet download parakeet'; see --parakeet-model for languages).",
 )
 @click.option(
     "--mlx-model",
     type=str,
     default=None,
     help="MLX Whisper model path/repo (default: alias mapped from --model)",
+)
+@click.option(
+    "--parakeet-model",
+    type=str,
+    default=None,
+    help="Parakeet onnx-asr model name (default: nemo-parakeet-tdt-0.6b-v2, "
+    "English only; nemo-parakeet-tdt-0.6b-v3 is multilingual)",
+)
+@click.option(
+    "--parakeet-keep-alignment",
+    is_flag=True,
+    default=False,
+    help="With --asr-backend parakeet, run WhisperX word-level alignment on "
+    "top of Parakeet (config 'C') instead of trusting Parakeet's native "
+    "timestamps (config 'B', the default).",
 )
 @click.option("--compute-type", type=str, default="float16")
 @click.option("--batch-size", "-b", type=int, default=16)
@@ -119,6 +136,8 @@ def run(
     torch_device,
     asr_backend,
     mlx_model,
+    parakeet_model,
+    parakeet_keep_alignment,
     compute_type,
     batch_size,
     language,
@@ -164,6 +183,8 @@ def run(
         torch_device=torch_device,
         asr_backend=asr_backend,
         mlx_model=mlx_model,
+        parakeet_model=parakeet_model,
+        parakeet_skip_alignment=not parakeet_keep_alignment,
         compute_type=compute_type,
         batch_size=batch_size,
         language=language,
@@ -182,7 +203,13 @@ def run(
     click.echo(f"Recording to: {session.output_file}")
     click.echo(f"  Mic:     {session.mic_source}")
     click.echo(f"  Monitor: {session.monitor_source}")
-    click.echo(f"  ASR:     {config.asr_backend}")
+    if config.asr_backend == "parakeet":
+        from millet.parakeet import DEFAULT_PARAKEET_MODEL
+
+        model = config.parakeet_model or DEFAULT_PARAKEET_MODEL
+        click.echo(f"  ASR:     parakeet ({model})")
+    else:
+        click.echo(f"  ASR:     {config.asr_backend}")
     click.echo(f"  Device:  {config.device}")
     click.echo(f"  Torch:   {config.torch_device}")
     click.echo(f"  Diarize: {bool(config.hf_token)}")

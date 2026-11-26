@@ -157,3 +157,122 @@ class TestTranscribeDeviceDefault:
             )
         assert result.exit_code == 0, result.output
         assert captured["cfg"].device == "cpu"
+
+
+class TestParakeetBackendOnGuiAndRun:
+    """``gui`` and ``run`` accept the parakeet backend and its options and
+    hand them on unchanged, like ``transcribe`` does."""
+
+    def test_gui_passes_parakeet_options_to_launch(self, monkeypatch):
+        import sys
+        from types import SimpleNamespace
+
+        captured: dict = {}
+        # Stub the module so the test does not need GTK bindings.
+        monkeypatch.setitem(
+            sys.modules,
+            "millet.gui",
+            SimpleNamespace(launch=lambda **kw: captured.update(kw)),
+        )
+        result = CliRunner().invoke(
+            meet_cli.gui,
+            [
+                "--asr-backend", "parakeet",
+                "--parakeet-model", "nemo-parakeet-tdt-0.6b-v3",
+                "--parakeet-keep-alignment",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert captured["asr_backend"] == "parakeet"
+        assert captured["parakeet_model"] == "nemo-parakeet-tdt-0.6b-v3"
+        assert captured["parakeet_skip_alignment"] is False
+
+    def test_gui_defaults_unchanged(self, monkeypatch):
+        import sys
+        from types import SimpleNamespace
+
+        captured: dict = {}
+        monkeypatch.setitem(
+            sys.modules,
+            "millet.gui",
+            SimpleNamespace(launch=lambda **kw: captured.update(kw)),
+        )
+        result = CliRunner().invoke(meet_cli.gui, [], catch_exceptions=False)
+        assert result.exit_code == 0, result.output
+        assert captured["asr_backend"] == "auto"
+        assert captured["parakeet_model"] is None
+        assert captured["parakeet_skip_alignment"] is True
+
+    def test_run_builds_config_with_parakeet_options(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
+        monkeypatch.setattr("millet.transcribe._apple_silicon", lambda: False)
+        monkeypatch.setattr(
+            "millet.transcribe._torch_device_available", lambda d: True
+        )
+        monkeypatch.setattr("millet.capture.check_prerequisites", lambda: [])
+
+        class _Stop(Exception):
+            pass
+
+        def _start():
+            # The config is built before recording starts; abort here so
+            # no real recording loop runs.
+            raise _Stop
+
+        session = SimpleNamespace(
+            output_file=tmp_path / "x.wav",
+            mic_source="mic",
+            monitor_source="mon",
+            start=_start,
+        )
+        monkeypatch.setattr("millet.capture.create_session", lambda **kw: session)
+
+        captured: dict = {}
+        from millet.transcribe import TranscriptionConfig as RealCfg
+
+        def _spy_cfg(**kwargs):
+            cfg = RealCfg(**kwargs)
+            captured["cfg"] = cfg
+            return cfg
+
+        with patch("millet.transcribe.TranscriptionConfig", side_effect=_spy_cfg):
+            result = CliRunner().invoke(
+                meet_cli.run,
+                [
+                    "--asr-backend", "parakeet",
+                    "--parakeet-model", "nemo-parakeet-tdt-0.6b-v3",
+                    "--mixdown", "dual",
+                    "--no-summarize",
+                ],
+            )
+        assert isinstance(result.exception, _Stop), result.output
+        cfg = captured["cfg"]
+        assert cfg.asr_backend == "parakeet"
+        assert cfg.parakeet_model == "nemo-parakeet-tdt-0.6b-v3"
+        assert cfg.parakeet_skip_alignment is True
+        assert cfg.mixdown == "dual"
+        assert "parakeet (nemo-parakeet-tdt-0.6b-v3)" in result.output
+
+    def test_run_rejects_unknown_backend(self):
+        result = CliRunner().invoke(meet_cli.run, ["--asr-backend", "nope"])
+        assert result.exit_code != 0
+        assert "parakeet" in result.output
+
+    def test_download_passes_parakeet_model(self, monkeypatch):
+        calls: dict = {}
+        monkeypatch.setattr(
+            "millet.parakeet.ensure_parakeet_cached", lambda model=None: False
+        )
+        monkeypatch.setattr(
+            "millet.parakeet.download_parakeet",
+            lambda model=None, progress_callback=None: calls.update(model=model),
+        )
+        result = CliRunner().invoke(
+            meet_cli.download,
+            ["parakeet", "--parakeet-model", "nemo-parakeet-tdt-0.6b-v3"],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert calls["model"] == "nemo-parakeet-tdt-0.6b-v3"

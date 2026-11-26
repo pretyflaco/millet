@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — Parakeet selectable from `run` and `gui`
+
+* `millet run` and `millet gui` accept `--asr-backend parakeet`,
+  `--parakeet-model` and `--parakeet-keep-alignment`, with the same
+  defaults and meaning as on `millet transcribe`.  Defaults are unchanged.
+* The GUI's Advanced panel offers `parakeet` in the ASR backend dropdown
+  and a "Parakeet model" field (empty = default model), next to the MLX
+  model field.
+* `millet download parakeet --parakeet-model <name>` fetches a specific
+  model, e.g. the multilingual `nemo-parakeet-tdt-0.6b-v3`.
+* Help text and docs no longer call Parakeet English-only: the default
+  `nemo-parakeet-tdt-0.6b-v2` is English-only, v3 is multilingual.
+  Parakeet does not detect the language, so pass `--language` for
+  non-English meetings.
+* Works with `--mixdown dual` as well: both channels go through the same
+  backend dispatch as with the other backends.
+
 ## v0.23.2 — no deployment- or organization-specific references
 
 No behavior change.

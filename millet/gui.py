@@ -502,7 +502,7 @@ class MeetRecorderWindow(Gtk.Window):
             return combo
 
         # ASR backend ------------------------------------------------------
-        backend_values = ["auto", "whisperx", "mlx"]
+        backend_values = ["auto", "whisperx", "mlx", "parakeet"]
         current_backend = self._transcribe_kwargs.get("asr_backend", "auto")
         self._asr_backend_combo = _combo(backend_values, current_backend)
         self._asr_backend_combo.connect(
@@ -548,6 +548,26 @@ class MeetRecorderWindow(Gtk.Window):
         grid.attach(_label("MLX model:"), 0, 2, 1, 1)
         grid.attach(self._mlx_model_entry, 1, 2, 1, 1)
 
+        # Parakeet model ---------------------------------------------------
+        # Only used with the parakeet backend.  Empty = module default (the
+        # English-only v2); enter nemo-parakeet-tdt-0.6b-v3 for multilingual.
+        self._parakeet_model_entry = Gtk.Entry()
+        self._parakeet_model_entry.set_placeholder_text(
+            "(default: nemo-parakeet-tdt-0.6b-v2, English only)"
+        )
+        existing_pk = self._transcribe_kwargs.get("parakeet_model")
+        if existing_pk:
+            self._parakeet_model_entry.set_text(existing_pk)
+        self._parakeet_model_entry.set_hexpand(True)
+
+        def _on_parakeet_model_changed(entry):
+            text = entry.get_text().strip()
+            self._transcribe_kwargs["parakeet_model"] = text or None
+
+        self._parakeet_model_entry.connect("changed", _on_parakeet_model_changed)
+        grid.attach(_label("Parakeet model:"), 0, 3, 1, 1)
+        grid.attach(self._parakeet_model_entry, 1, 3, 1, 1)
+
         # Language ---------------------------------------------------------
         # Whisper auto-detect on sparse / quiet audio (long silences, short
         # opening utterances) is unreliable and can mis-classify English as
@@ -580,8 +600,8 @@ class MeetRecorderWindow(Gtk.Window):
                 "language", c.get_active_text() or "auto"
             ),
         )
-        grid.attach(_label("Language:"), 0, 3, 1, 1)
-        grid.attach(self._language_combo, 1, 3, 1, 1)
+        grid.attach(_label("Language:"), 0, 4, 1, 1)
+        grid.attach(self._language_combo, 1, 4, 1, 1)
 
         expander.add(grid)
         parent_vbox.pack_start(expander, False, False, 0)
@@ -1564,6 +1584,8 @@ def launch(
     torch_device: str | None = None,
     asr_backend: str = "auto",
     mlx_model: str | None = None,
+    parakeet_model: str | None = None,
+    parakeet_skip_alignment: bool = True,
     compute_type: str = "float16",
     batch_size: int = 16,
     language: str = "auto",
@@ -1596,6 +1618,8 @@ def launch(
         "torch_device": torch_device,
         "asr_backend": asr_backend,
         "mlx_model": mlx_model,
+        "parakeet_model": parakeet_model,
+        "parakeet_skip_alignment": parakeet_skip_alignment,
         "compute_type": compute_type,
         "batch_size": batch_size,
         "language": language,

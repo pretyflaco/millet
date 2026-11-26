@@ -79,8 +79,8 @@ def _cue_frames(audio_path, enabled: bool):
     type=click.Choice(["auto", "whisperx", "mlx", "parakeet"]),
     default="auto",
     help="ASR backend: auto, whisperx, mlx, or parakeet (default: auto). "
-    "parakeet = NVIDIA Parakeet via onnx-asr (English; needs "
-    "'millet download parakeet').",
+    "parakeet = NVIDIA Parakeet via onnx-asr (needs "
+    "'millet download parakeet'; see --parakeet-model for languages).",
 )
 @click.option(
     "--mlx-model",
@@ -92,7 +92,8 @@ def _cue_frames(audio_path, enabled: bool):
     "--parakeet-model",
     type=str,
     default=None,
-    help="Parakeet onnx-asr model name (default: nemo-parakeet-tdt-0.6b-v2, English)",
+    help="Parakeet onnx-asr model name (default: nemo-parakeet-tdt-0.6b-v2, "
+    "English only; nemo-parakeet-tdt-0.6b-v3 is multilingual)",
 )
 @click.option(
     "--parakeet-keep-alignment",

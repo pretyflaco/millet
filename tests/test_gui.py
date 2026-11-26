@@ -61,6 +61,48 @@ def test_launch_threads_new_kwargs_into_transcribe_kwargs(monkeypatch):
     assert tk["device"] == "cpu"
 
 
+def test_launch_threads_parakeet_kwargs(monkeypatch):
+    """``launch`` passes the Parakeet model and alignment flag through, and the
+    resulting kwargs build a valid TranscriptionConfig."""
+    import millet.gui as gui_mod
+    from millet.transcribe import TranscriptionConfig
+
+    captured: dict = {}
+
+    class _Hide:
+        def hide(self):
+            pass
+
+    class _StubWindow:
+        _rec_btn_box = _alignment_box = _label_box = _sync_box = _Hide()
+        _progress_bar = _open_transcript_btn = _open_folder_btn = _Hide()
+        _bg_label = _Hide()
+
+        def __init__(self, capture_kwargs, transcribe_kwargs, **kwargs):
+            captured["transcribe_kwargs"] = transcribe_kwargs
+
+        def show_all(self):
+            pass
+
+    monkeypatch.setattr(gui_mod, "MeetRecorderWindow", _StubWindow)
+    monkeypatch.setattr(gui_mod.Gtk, "main", lambda: None)
+
+    gui_mod.launch(
+        asr_backend="parakeet",
+        parakeet_model="nemo-parakeet-tdt-0.6b-v3",
+        device="cpu",
+        torch_device="cpu",
+    )
+
+    tk = captured["transcribe_kwargs"]
+    assert tk["asr_backend"] == "parakeet"
+    assert tk["parakeet_model"] == "nemo-parakeet-tdt-0.6b-v3"
+    assert tk["parakeet_skip_alignment"] is True
+    cfg = TranscriptionConfig(**tk)
+    assert cfg.asr_backend == "parakeet"
+    assert cfg.parakeet_model == "nemo-parakeet-tdt-0.6b-v3"
+
+
 def test_launch_defaults_pass_none_through(monkeypatch):
     """When the caller doesn't override device/torch_device/mlx_model,
     ``launch`` should pass None so TranscriptionConfig.__post_init__ resolves
