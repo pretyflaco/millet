@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.24.0 — domain vocabulary and pipeline performance
+
+### Added
+
+- Add a three-layer domain vocabulary pipeline:
+  * token-budgeted Whisper `initial_prompt` and hotwords, including CJK and
+    emoji-safe selection with a conservative offline fallback;
+  * deterministic, single-pass alias normalization in segment text and word
+    timings, including possessives and clitics, overlap handling, and
+    idempotent chain/cycle resolution;
+  * a size-bounded, delimited summarizer glossary that treats every entry as
+    untrusted spelling metadata rather than instructions.
+- Load `vocabulary.json` globally or per team, and support
+  `millet label --apply-vocabulary` for deterministic transcript correction and
+  summary regeneration on existing sessions. Explicit vocabulary regeneration
+  fails loudly if no summary backend is available.
+- Add `millet sync --fallback-meeting-type`, preserving schedule-first sync while
+  avoiding a second invocation for unscheduled meetings.
+
+### Improved
+
+- Reuse a single stereo decode and shared alignment model for dual-diarize runs.
+- Bound audio memory: direct stereo statistics use small Chan-merge chunks, while
+  over-budget or unknown-duration recordings stream full-file RMS and channel
+  correlation in constant memory, including late channel activity.
+- Decode OGG stereo once for RMS-balanced mono mixdown and cache voiceprint
+  channels once per session, with explicit long-session cache limits.
+- Use lightweight `requests` for Ollama GPU-unload checks and only invoke the
+  check on CUDA paths.
+- Preserve the backend-aware recording drain when the installed capture package
+  provides it, with a legacy fallback.
+
+### Tests
+
+- Focused no-torch/no-GTK CI selection: **523 passed** on each supported Python
+  version.
+- Covers token budgets, large-vocabulary compilation performance, possessive word
+  timings, glossary bounds/injection hardening, chained/cyclic aliases, late
+  stereo activity, unaligned streaming reads, and bounded direct-array memory.
+
 ## v0.23.2 — no deployment- or organization-specific references
 
 No behavior change.
