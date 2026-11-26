@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.25.1 — harvest default-model hotfix
+
+### Fixed
+
+- Pass `model=None` from `_call_private_llm()` when no model override is given,
+  allowing `SummaryConfig` to resolve each backend's default model.  The previous
+  empty string was sent upstream and rejected by both Tinfoil and Ollama.
+
+### Tests
+
+- Focused no-torch/no-GTK CI selection: **534 passed** on each supported Python
+  version, including a regression proving the default Tinfoil model is non-empty
+  and used when no override is supplied.
+
 ## v0.25.0 — read-only historical vocabulary harvesting
 
 ### Added

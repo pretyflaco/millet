@@ -7,6 +7,7 @@ import os
 import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
@@ -518,3 +519,26 @@ def test_second_harvest_suppresses_satisfied_layers_but_keeps_new_aliases(tmp_pa
     assert "vizier" not in by_obs  # term_only satisfied (Vezir already in terms)
     assert "caddy" in by_obs and by_obs["caddy"]["suggested_layer"] == "term_and_glossary"
     assert "the zeer" in by_obs and by_obs["the zeer"]["suggested_layer"] == "alias"
+
+
+def test_private_llm_uses_default_model_when_no_override_is_given(monkeypatch):
+    """No --summary-model override must resolve the backend default, not ''."""
+    from millet import summarize as sum_mod
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(sum_mod, "is_backend_available", lambda _cfg: True)
+
+    def fake_tinfoil(system_prompt, user_prompt, cfg):
+        captured["model"] = cfg.model
+        return sum_mod.MeetingSummary(
+            markdown="{}",
+            model=cfg.model,
+            elapsed_seconds=0.01,
+            backend="tinfoil",
+        )
+
+    monkeypatch.setattr(sum_mod, "_summarize_tinfoil", fake_tinfoil)
+    _raw, backend_label = _call_private_llm("sys", "usr", backend="tinfoil")
+    assert captured["model"] == sum_mod.DEFAULT_TINFOIL_MODEL
+    assert captured["model"]
+    assert backend_label == f"tinfoil/{sum_mod.DEFAULT_TINFOIL_MODEL}"

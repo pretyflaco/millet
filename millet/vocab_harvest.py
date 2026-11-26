@@ -451,7 +451,7 @@ def _call_private_llm(
             )
         cfg = SummaryConfig(
             backend=chosen,
-            model=model or "",
+            model=model,
             temperature=0.1,
             auto_vocabulary=False,
         )
