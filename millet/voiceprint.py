@@ -364,10 +364,51 @@ def _extract_channel_audio(audio_path: Path, channel: str) -> tuple[np.ndarray, 
         elif channel in _CHANNEL_CACHE:
             return _CHANNEL_CACHE[channel]
 
+    # Single-pass stereo decode: decode both mic and system channels in one
+    # ffmpeg call so subsequent requests for the other channel hit the cache.
+    if channel in ("mic", "system") and key is not None:
+        stereo = _decode_stereo_channels_16k(audio_path)
+        if stereo is not None:
+            mic_s, sys_s = stereo
+            _CHANNEL_CACHE["mic"] = (mic_s, 16000)
+            _CHANNEL_CACHE["system"] = (sys_s, 16000)
+            return _CHANNEL_CACHE[channel]
+
     result = _decode_channel_audio(audio_path, channel)
     if key is not None:
         _CHANNEL_CACHE[channel] = result
     return result
+
+
+def _decode_stereo_channels_16k(
+    audio_path: Path,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Decode a stereo audio file once into normalized (mic, system) 16 kHz float32 arrays."""
+    import subprocess
+
+    cmd = [
+        "ffmpeg", "-v", "quiet",
+        "-i", str(audio_path),
+        "-ac", "2",
+        "-ar", "16000",
+        "-f", "s16le",
+        "-acodec", "pcm_s16le",
+        "-",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True)
+        if result.returncode != 0 or not result.stdout:
+            return None
+        raw = np.frombuffer(result.stdout, dtype=np.int16)
+        usable = (len(raw) // 2) * 2
+        if usable < 2:
+            return None
+        stereo = raw[:usable].reshape(-1, 2).astype(np.float32)
+        stereo /= 32768.0
+        return stereo[:, 0].copy(), stereo[:, 1].copy()
+    except Exception as exc:
+        log.debug("Stereo channel audio extraction failed: %s", exc)
+        return None
 
 
 def _decode_channel_audio(audio_path: Path, channel: str) -> tuple[np.ndarray, int] | None:

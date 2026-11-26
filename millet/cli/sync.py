@@ -21,6 +21,13 @@ import click
     help="Override meeting type folder (e.g. 'weekly-sync', 'dev-standup')",
 )
 @click.option(
+    "--fallback-meeting-type",
+    type=str,
+    default=None,
+    help="Folder slug to use ONLY when no configured schedule matches "
+         "(avoids a second `millet sync --force` invocation for unscheduled meetings).",
+)
+@click.option(
     "--list-schedule",
     is_flag=True,
     default=False,
@@ -40,7 +47,15 @@ import click
          "and a team-namespaced repo clone. Lets one scribe sync different "
          "teams to different repos.",
 )
-def sync(session_dirs, force, meeting_type, list_schedule, init_config, team):
+def sync(
+    session_dirs,
+    force,
+    meeting_type,
+    fallback_meeting_type,
+    list_schedule,
+    init_config,
+    team,
+):
     """Sync meeting artifacts to a configured Git repository.
 
     Detects whether each session matches a configured meeting schedule and
@@ -82,6 +97,13 @@ def sync(session_dirs, force, meeting_type, list_schedule, init_config, team):
         # traversal-capable values ('../..', absolute paths) are rejected.
         try:
             _validate_folder_slug(meeting_type, "--meeting-type")
+        except RuntimeError as exc:
+            click.echo(f"Error: {exc}", err=True)
+            raise SystemExit(1) from None
+
+    if fallback_meeting_type:
+        try:
+            _validate_folder_slug(fallback_meeting_type, "--fallback-meeting-type")
         except RuntimeError as exc:
             click.echo(f"Error: {exc}", err=True)
             raise SystemExit(1) from None
@@ -148,7 +170,12 @@ def sync(session_dirs, force, meeting_type, list_schedule, init_config, team):
         else:
             match = detect_meeting_type(session_path, team=team)
 
-        if match is None and not force:
+        if match is None and fallback_meeting_type:
+            click.echo(
+                f"  No schedule match; using fallback folder '{fallback_meeting_type}'"
+            )
+            match = MeetingMatch(name=fallback_meeting_type, folder=fallback_meeting_type)
+        elif match is None and not force:
             click.echo(
                 "  Skipped: not a scheduled meeting "
                 "(use --force to push anyway, --meeting-type to specify type)",
