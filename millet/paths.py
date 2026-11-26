@@ -88,6 +88,7 @@ _TEAM_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{2,31}$")
 
 _PROFILES_FILENAME = "speaker_profiles.json"
 _SYNC_FILENAME = "sync_config.json"
+_VOCABULARY_FILENAME = "vocabulary.json"
 
 
 def _validate_team(team: str | None) -> str | None:
@@ -138,6 +139,24 @@ def profiles_path(team: str | None = None) -> Path:
 def sync_config_path(team: str | None = None) -> Path:
     """Path to the sync_config.json, optionally scoped to a team."""
     return config_dir(team) / _SYNC_FILENAME
+
+
+def vocabulary_path(team: str | None = None) -> Path:
+    """Path to the custom vocabulary/glossary file, optionally scoped to a team.
+
+    Precedence:
+      1. ``team`` given → ``<config_dir>/<team>/vocabulary.json``
+         (env override intentionally ignored — explicit team wins).
+      2. ``$MILLET_VOCABULARY_PATH`` if set.
+      3. ``<config_dir>/vocabulary.json``.
+    """
+    team = _validate_team(team)
+    if team:
+        return config_dir(team) / _VOCABULARY_FILENAME
+    env = getenv_renamed("MILLET_VOCABULARY_PATH", "MEET_VOCABULARY_PATH", default="")
+    if env:
+        return Path(env).expanduser()
+    return config_dir() / _VOCABULARY_FILENAME
 
 
 def recordings_dir(team: str | None = None) -> Path:

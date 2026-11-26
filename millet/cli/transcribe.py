@@ -262,6 +262,26 @@ def _cue_frames(audio_path, enabled: bool):
     "language is auto, the default wins UNLESS a channel confidently detects "
     "another language. Prevents drift for single-language teams.",
 )
+@click.option(
+    "--vocabulary",
+    "vocabulary_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Path to a vocabulary JSON (or plain word-list) file with special terms, "
+    "mishearing aliases, and glossary notes. Defaults to ~/.config/meet/vocabulary.json "
+    "if present.",
+)
+@click.option(
+    "--initial-prompt",
+    default=None,
+    help="Extra ASR initial_prompt text / special terms to bias Whisper decoding.",
+)
+@click.option(
+    "--auto-vocabulary/--no-auto-vocabulary",
+    default=True,
+    help="Auto-load ~/.config/meet/vocabulary.json and enrolled speaker names "
+    "for ASR prompting and summary terminology (default: on).",
+)
 def transcribe(
     audio_file,
     model,
@@ -295,6 +315,9 @@ def transcribe(
     speaker_repair,
     language_detection_segments,
     default_language,
+    vocabulary_path,
+    initial_prompt,
+    auto_vocabulary,
 ):
     """Transcribe a recorded audio file with speaker diarization."""
     from millet.transcribe import (
@@ -364,6 +387,9 @@ def transcribe(
         speaker_repair=speaker_repair,
         language_detection_segments=language_detection_segments,
         default_language=default_language,
+        vocabulary_path=Path(vocabulary_path) if vocabulary_path else None,
+        initial_prompt=initial_prompt,
+        auto_vocabulary=auto_vocabulary,
     )
 
     if not no_diarize and not config.hf_token and mixdown != "dual":
@@ -391,8 +417,9 @@ def transcribe(
     click.echo(f"  Diarize:  {bool(config.hf_token)}")
     click.echo()
 
-    # Free GPU memory from Ollama before transcription
-    ensure_gpu_available()
+    # Free GPU memory from Ollama before transcription (only when using local CUDA)
+    if config.device == "cuda" or config.torch_device == "cuda":
+        ensure_gpu_available()
 
     try:
         transcript = do_transcribe(audio_path, config)
@@ -448,6 +475,8 @@ def transcribe(
                 ollama_singlepass=ollama_singlepass,
                 summary_template=summary_template,
                 frames=_cue_frames(audio_path, summary_frames),
+                vocabulary_path=Path(vocabulary_path) if vocabulary_path else None,
+                auto_vocabulary=auto_vocabulary,
             )
         except Exception as exc:
             # Only raised when summary_preset was set (preset guard).

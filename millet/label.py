@@ -565,6 +565,8 @@ def apply_labels(
     summary_language: str | None = None,
     summary_template: str | None = None,
     progress_callback: Any | None = None,
+    apply_vocabulary: bool = False,
+    vocabulary_path: Path | None = None,
 ) -> dict[str, Path]:
     """Apply user-assigned speaker names to a session's outputs.
 
@@ -620,6 +622,14 @@ def apply_labels(
     _log("Relabeling transcript...")
     transcript = relabel_transcript_in_memory(transcript, label_map)
 
+    if apply_vocabulary:
+        from millet.vocabulary import apply_vocabulary_to_transcript, load_vocabulary
+
+        vocab = load_vocabulary(path=vocabulary_path)
+        n_replaced = apply_vocabulary_to_transcript(transcript, vocab)
+        if n_replaced:
+            _log(f"Applied {n_replaced} vocabulary alias correction(s)...")
+
     # ── Save updated transcript files ──
     _log("Saving updated transcript files...")
     result_files = transcript.save(session_dir, basename=basename)
@@ -652,6 +662,8 @@ def apply_labels(
                 cfg_kwargs["ollama_singlepass"] = True
             if summary_template:
                 cfg_kwargs["template"] = summary_template
+            if vocabulary_path is not None:
+                cfg_kwargs["vocabulary_path"] = vocabulary_path
             # Narrated screen recordings: show the model the screen at each
             # cue, not just the narration.  Frames are written next to the
             # session by the caller (vezir) *after* transcription, so they
@@ -720,17 +732,18 @@ def apply_labels(
                         f"{summary_result.elapsed_seconds:.1f}s"
                     )
             else:
-                _log(_backend_not_available_message(summary_config))
+                msg = _backend_not_available_message(summary_config)
+                _log(msg)
+                if summary_preset or apply_vocabulary:
+                    raise RuntimeError(msg)
                 # Fall back to find-and-replace
                 regenerate_summary = False
         except Exception as exc:
             _log(f"Summary regeneration failed: {exc}")
-            if summary_preset:
-                # Preset was explicitly requested — user chose a specific
-                # privacy/quality level.  Mirror the post_process() contract
-                # in transcribe.py: surface the failure as an exception so
-                # callers (vezir, automation) can react.  Standalone callers
-                # that don't pass summary_preset keep the silent-skip behavior.
+            if summary_preset or apply_vocabulary:
+                # Explicit preset or vocabulary regeneration must fail loudly so
+                # callers (vezir, automation) never mistake an unchanged summary
+                # for a completed regeneration.
                 raise
             regenerate_summary = False
 

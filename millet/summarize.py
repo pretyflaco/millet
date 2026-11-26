@@ -816,6 +816,11 @@ class SummaryConfig:
     # it can SEE rather than only what was said.  Ignored by backends and
     # models that cannot accept image input -- never a hard failure.
     frames: list[Path] | None = None
+    # Optional custom vocabulary/glossary for resolving phonetic ASR errors
+    # in the summary without hallucinating unmentioned terms.
+    vocabulary_path: Path | None = None
+    vocabulary: Any = None
+    auto_vocabulary: bool = True
 
     def __post_init__(self):
         # Resolve preset: explicit arg > env var > None
@@ -1237,6 +1242,27 @@ def _summarize_ollama(
     )
 
 
+def _resolve_summary_glossary(config: SummaryConfig) -> str:
+    """Build the optional terminology glossary prompt block for *config*."""
+    from millet.vocabulary import (
+        Vocabulary,
+        build_summary_glossary_block,
+        load_vocabulary,
+    )
+
+    vocab = config.vocabulary
+    if vocab is None:
+        if config.vocabulary_path is not None:
+            vocab = load_vocabulary(path=config.vocabulary_path)
+        elif config.auto_vocabulary:
+            vocab = load_vocabulary()
+        else:
+            return ""
+    elif isinstance(vocab, dict):
+        vocab = Vocabulary.from_dict(vocab)
+    return build_summary_glossary_block(vocab)
+
+
 def _summarize_ollama_twopass(
     transcript_text: str,
     config: SummaryConfig,
@@ -1256,6 +1282,9 @@ def _summarize_ollama_twopass(
     """
     # ── Pass 1: extraction ────────────────────────────────────────────────
     extract_sys = _build_extract_system_prompt(language)
+    glossary_block = _resolve_summary_glossary(config)
+    if glossary_block:
+        extract_sys = f"{extract_sys}\n\n{glossary_block}"
     extract_user_tmpl = _load_extract_user_template()
     extract_user = extract_user_tmpl.format(transcript=transcript_text)
     extracted, t1 = _call_ollama_chat(
@@ -1956,6 +1985,9 @@ def _dispatch(
             # Carry frames too: a rebuilt config that drops them would
             # silently downgrade a vision run to text-only on fallback.
             frames=config.frames,
+            vocabulary_path=config.vocabulary_path,
+            vocabulary=config.vocabulary,
+            auto_vocabulary=config.auto_vocabulary,
         )
     else:
         fallback_config = config
@@ -2052,6 +2084,9 @@ def summarize(
     # swaps in its own prompt files (loaded per call — the module-level
     # USER_PROMPT_TEMPLATE caches only the default template).
     system_prompt = _build_system_prompt(language, template=config.template)
+    glossary_block = _resolve_summary_glossary(config)
+    if glossary_block:
+        system_prompt = f"{system_prompt}\n\n{glossary_block}"
 
     if config.template:
         user_prompt = _load_user_prompt_template(config.template).format(

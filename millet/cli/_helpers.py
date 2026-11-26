@@ -10,8 +10,8 @@ from millet.capture import DRAIN_SECONDS
 from millet.utils import fmt_elapsed, fmt_size
 
 
-def _drain_countdown(session, seconds: int = DRAIN_SECONDS) -> None:
-    """Keep recording for *seconds* more to let ffmpeg's delayed pipeline flush.
+def _drain_countdown(session, seconds: int | None = None) -> None:
+    """Keep recording for *seconds* more to let the recorder pipeline flush.
 
     During the countdown:
     - Additional Ctrl+C signals are ignored (SIGINT → SIG_IGN)
@@ -19,6 +19,13 @@ def _drain_countdown(session, seconds: int = DRAIN_SECONDS) -> None:
       elapsed recording time, and file size
     After the countdown, default SIGINT handling is restored.
     """
+    if seconds is None:
+        try:
+            from millet.capture import default_drain_seconds
+
+            seconds = default_drain_seconds()
+        except ImportError:
+            seconds = DRAIN_SECONDS
     # Ignore further Ctrl+C during the drain window
     prev_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
 
@@ -46,7 +53,7 @@ def _drain_countdown(session, seconds: int = DRAIN_SECONDS) -> None:
 def _generate_summary(
     transcript, out_dir, basename, summary_model, files, summary_backend=None,
     summary_preset=None, ollama_singlepass=False, summary_template=None,
-    frames=None,
+    frames=None, vocabulary_path=None, auto_vocabulary=True,
 ):
     """Generate an AI meeting summary. Returns MeetingSummary or None.
 
@@ -80,6 +87,10 @@ def _generate_summary(
         config_kwargs["template"] = summary_template
     if frames:
         config_kwargs["frames"] = frames
+    if vocabulary_path is not None:
+        config_kwargs["vocabulary_path"] = vocabulary_path
+    if not auto_vocabulary:
+        config_kwargs["auto_vocabulary"] = False
     summary_config = SummaryConfig(**config_kwargs)
     if summary_config.frames:
         click.echo(f"  Including {len(summary_config.frames)} cue frame(s)")

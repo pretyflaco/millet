@@ -435,7 +435,7 @@ def ensure_gpu_available(
     Checks if Ollama has models loaded and unloads them to free VRAM.
     This is transparent — we tell the user what we're doing.
     """
-    import json as _json
+    import requests
 
     def _status(msg: str) -> None:
         if progress_callback:
@@ -444,16 +444,11 @@ def ensure_gpu_available(
             print(f"  {msg}")
 
     try:
-        result = subprocess.run(
-            ["curl", "-s", "http://localhost:11434/api/ps"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode != 0:
+        resp = requests.get("http://localhost:11434/api/ps", timeout=5)
+        if resp.status_code != 200:
             return  # Ollama not running — nothing to do
 
-        data = _json.loads(result.stdout)
+        data = resp.json()
         models = data.get("models", [])
         if not models:
             return  # No models loaded
@@ -463,16 +458,9 @@ def ensure_gpu_available(
             _status(
                 f"Unloading Ollama model ({model_name}) to free GPU memory for transcription..."
             )
-            subprocess.run(
-                [
-                    "curl",
-                    "-s",
-                    "http://localhost:11434/api/generate",
-                    "-d",
-                    _json.dumps({"model": model_name, "keep_alive": 0}),
-                ],
-                capture_output=True,
-                text=True,
+            requests.post(
+                "http://localhost:11434/api/generate",
+                json={"model": model_name, "keep_alive": 0},
                 timeout=30,
             )
 
@@ -482,7 +470,7 @@ def ensure_gpu_available(
         time.sleep(2)
         _status("GPU memory freed.")
 
-    except (subprocess.TimeoutExpired, _json.JSONDecodeError, FileNotFoundError):
+    except (requests.RequestException, ValueError):
         pass  # Ollama not installed or not responding — fine
 
 
@@ -628,6 +616,17 @@ class TranscriptionConfig:
     # clearly holds two voices (see millet.speaker_repair).  Disable via
     # --no-speaker-repair.
     speaker_repair: bool = True
+
+    # ── Custom vocabulary / ASR biasing ──
+    # Optional path to a vocabulary.json (or newline-separated .txt) with
+    # canonical terms, recurring mishearing aliases, and glossary notes.
+    # When None and auto_vocabulary=True, loads ~/.config/meet/vocabulary.json
+    # (or $MILLET_VOCABULARY_PATH) if present and seeds ASR prompts with
+    # enrolled speaker names from speaker_profiles.json.
+    vocabulary_path: Path | None = None
+    initial_prompt: str | None = None
+    hotwords: str | None = None
+    auto_vocabulary: bool = True
 
     # Internal: set to True by __post_init__ when `device` was auto-flipped
     # to 'cpu' because the requested accelerator was unavailable.  Used to
@@ -862,11 +861,22 @@ def _extract_mono(audio_file: Path, channel: int = 0) -> Path:
     return Path(tmp.name)
 
 
-def _load_stereo_int16(audio_file: Path):
-    """Decode a stereo file to (left, right) int16 numpy arrays via ffmpeg.
+# Cap in-memory stereo reuse to ~1 hour (16 kHz stereo int16 ≈ 230 MB) so
+# multi-hour recordings fall back to disk-backed per-channel temp WAVs.
+MAX_IN_MEMORY_STEREO_SECONDS = 3600
+# Bounded chunk size for O(1)-memory single-source stereo analysis (both
+# streaming and direct in-memory channels): 10 s at 16 kHz = 160,000 frames
+# (~640 KB int16 / ~7.7 MB peak float64 temporaries).
+_STEREO_STREAM_CHUNK_FRAMES = 16000 * 10
+_STEREO_STREAM_CHUNK_BYTES = _STEREO_STREAM_CHUNK_FRAMES * 4
 
-    Returns ``(left, right)`` float32 arrays, or ``None`` if decoding fails or
-    numpy is unavailable.  Works for any ffmpeg-readable format (wav, ogg, …).
+
+def _load_stereo_int16(audio_file: Path):
+    """Decode a stereo file to (left, right) int16 numpy views via ffmpeg.
+
+    Returns ``(left, right)`` int16 arrays (half the memory of float32), or
+    ``None`` if decoding fails or numpy is unavailable.  Works for any
+    ffmpeg-readable format (wav, ogg, …).
     """
     try:
         import numpy as np
@@ -885,11 +895,165 @@ def _load_stereo_int16(audio_file: Path):
     data = np.frombuffer(result.stdout, dtype=np.int16)
     if data.size < 2:
         return None
-    data = data[: (data.size // 2) * 2].reshape(-1, 2).astype(np.float32)
+    data = data[: (data.size // 2) * 2].reshape(-1, 2)
     return data[:, 0], data[:, 1]
 
 
-def _is_single_source_stereo(audio_file: Path, config) -> bool:
+class _StereoStatsAccumulator:
+    """Online exact active-RMS and Pearson-correlation accumulator (O(1) RAM).
+
+    Uses Chan's parallel variance/covariance merge in float64 so streaming
+    10-second chunks across an arbitrarily long recording produces the exact
+    full-file RMS and correlation without buffering the full waveform.
+    """
+
+    silence_thr: float = 50.0  # ~-50 dBFS for 16-bit (matches _mixdown_to_mono)
+
+    def __init__(self) -> None:
+        self.left_active_sum_sq: float = 0.0
+        self.left_active_n: int = 0
+        self.right_active_sum_sq: float = 0.0
+        self.right_active_n: int = 0
+        self.n: int = 0
+        self.mu_a: float = 0.0
+        self.mu_b: float = 0.0
+        self.m2_a: float = 0.0
+        self.m2_b: float = 0.0
+        self.c_ab: float = 0.0
+
+    def update(self, left: Any, right: Any) -> None:
+        import numpy as np
+
+        m = min(int(left.size), int(right.size))
+        if m <= 0:
+            return
+        a = left[:m].astype(np.float64, copy=False)
+        b = right[:m].astype(np.float64, copy=False)
+
+        la = a[np.abs(a) > self.silence_thr]
+        if la.size:
+            self.left_active_sum_sq += float(np.dot(la, la))
+            self.left_active_n += int(la.size)
+        ra = b[np.abs(b) > self.silence_thr]
+        if ra.size:
+            self.right_active_sum_sq += float(np.dot(ra, ra))
+            self.right_active_n += int(ra.size)
+
+        mean_a = float(a.mean())
+        mean_b = float(b.mean())
+        da = a - mean_a
+        db = b - mean_b
+        chunk_m2_a = float(np.dot(da, da))
+        chunk_m2_b = float(np.dot(db, db))
+        chunk_c_ab = float(np.dot(da, db))
+
+        if self.n == 0:
+            self.n = m
+            self.mu_a = mean_a
+            self.mu_b = mean_b
+            self.m2_a = chunk_m2_a
+            self.m2_b = chunk_m2_b
+            self.c_ab = chunk_c_ab
+        else:
+            new_n = self.n + m
+            delta_a = mean_a - self.mu_a
+            delta_b = mean_b - self.mu_b
+            weight = (self.n * m) / new_n
+            self.mu_a += delta_a * (m / new_n)
+            self.mu_b += delta_b * (m / new_n)
+            self.m2_a += chunk_m2_a + delta_a * delta_a * weight
+            self.m2_b += chunk_m2_b + delta_b * delta_b * weight
+            self.c_ab += chunk_c_ab + delta_a * delta_b * weight
+            self.n = new_n
+
+    def finalize(self) -> tuple[float, float, int, float | None]:
+        """Return ``(left_rms, right_rms, total_frames, pearson_corr_or_none)``."""
+        import math
+
+        left_rms = (
+            math.sqrt(self.left_active_sum_sq / self.left_active_n)
+            if self.left_active_n > 0
+            else 0.0
+        )
+        right_rms = (
+            math.sqrt(self.right_active_sum_sq / self.right_active_n)
+            if self.right_active_n > 0
+            else 0.0
+        )
+        corr: float | None = None
+        if self.n >= 16000:
+            std_a = math.sqrt(max(0.0, self.m2_a / self.n))
+            std_b = math.sqrt(max(0.0, self.m2_b / self.n))
+            if std_a > 1e-6 and std_b > 1e-6:
+                denom = math.sqrt(max(0.0, self.m2_a * self.m2_b))
+                if denom > 0.0:
+                    corr = self.c_ab / denom
+        return left_rms, right_rms, self.n, corr
+
+
+def _stream_stereo_stats(
+    audio_file: Path,
+    *,
+    chunk_bytes: int = _STEREO_STREAM_CHUNK_BYTES,
+) -> tuple[float, float, int, float | None] | None:
+    """Compute full-file stereo active RMS and correlation in O(1) memory."""
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    cmd = [
+        "ffmpeg", "-v", "error", "-i", str(audio_file),
+        "-ac", "2", "-ar", "16000", "-f", "s16le", "-c:a", "pcm_s16le", "-",
+    ]
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
+    except Exception:
+        return None
+
+    acc = _StereoStatsAccumulator()
+    carry = b""
+    try:
+        assert proc.stdout is not None
+        while True:
+            raw = proc.stdout.read(chunk_bytes)
+            if not raw:
+                break
+            buf = carry + raw if carry else raw
+            usable = (len(buf) // 4) * 4
+            carry = buf[usable:]
+            if usable >= 4:
+                samples = np.frombuffer(buf[:usable], dtype=np.int16).reshape(-1, 2)
+                acc.update(samples[:, 0], samples[:, 1])
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return None
+    finally:
+        if proc.stdout is not None:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+        try:
+            rc = proc.wait()
+        except Exception:
+            rc = 1
+
+    if rc != 0 or acc.n == 0:
+        return None
+    return acc.finalize()
+
+
+def _is_single_source_stereo(
+    audio_file: Path,
+    config,
+    *,
+    chans: tuple[Any, Any] | None = None,
+) -> bool:
     """True if a stereo recording is effectively single-source.
 
     Two cases the dual-diarize path mishandles (it labels the whole mic
@@ -905,24 +1069,35 @@ def _is_single_source_stereo(audio_file: Path, config) -> bool:
     In either case the caller should fall back to the mono path so the
     combined-signal diarization can split multiple in-room speakers.
 
+    When *chans* is ``None`` (e.g. over-budget or unknown-duration files),
+    streams the full file in constant memory so late system-channel activation
+    or late channel divergence is always seen without buffering the waveform.
+
     Conservative on failure: returns False (keep dual-diarize) if the audio
     can't be analyzed, so genuine remote calls are never mis-routed.
     """
-    chans = _load_stereo_int16(audio_file)
-    if chans is None:
+    if chans is not None:
+        try:
+            import numpy as np  # noqa: F401
+        except ImportError:
+            return False
+        left, right = chans
+        acc = _StereoStatsAccumulator()
+        total = min(int(left.size), int(right.size))
+        for start in range(0, total, _STEREO_STREAM_CHUNK_FRAMES):
+            end = start + _STEREO_STREAM_CHUNK_FRAMES
+            acc.update(left[start:end], right[start:end])
+        stats: tuple[float, float, int, float | None] | None = (
+            acc.finalize() if acc.n > 0 else None
+        )
+    else:
+        stats = _stream_stereo_stats(audio_file)
+
+    if stats is None:
         return False
-    try:
-        import numpy as np
-    except ImportError:
-        return False
-    left, right = chans
+    left_rms, right_rms, _n, corr = stats
 
     # ── System-channel inactivity (per-channel active-sample RMS) ──
-    silence_thr = 50.0  # ~-50 dBFS for 16-bit (matches _mixdown_to_mono)
-    left_active = left[np.abs(left) > silence_thr]
-    right_active = right[np.abs(right) > silence_thr]
-    left_rms = float(np.sqrt(np.mean(left_active**2))) if left_active.size else 0.0
-    right_rms = float(np.sqrt(np.mean(right_active**2))) if right_active.size else 0.0
     if left_rms > 0.0:
         if right_rms <= config.system_inactive_rms_ratio * left_rms:
             return True
@@ -931,14 +1106,8 @@ def _is_single_source_stereo(audio_file: Path, config) -> bool:
         return True
 
     # ── Near-duplicate channels (Pearson correlation) ──
-    n = min(left.size, right.size)
-    if n >= 16000:  # at least ~1 s at 16 kHz before trusting correlation
-        a = left[:n]
-        b = right[:n]
-        if a.std() > 1e-6 and b.std() > 1e-6:
-            corr = float(np.corrcoef(a, b)[0, 1])
-            if corr >= config.channel_duplicate_corr:
-                return True
+    if corr is not None and corr >= config.channel_duplicate_corr:
+        return True
     return False
 
 
@@ -981,23 +1150,35 @@ def _mixdown_to_mono(audio_file: Path) -> Path:
             raise RuntimeError(f"Mono mixdown failed: {result.stderr}") from None
         return Path(tmp.name)
 
-    # ── Read stereo WAV (only works for .wav files) ──
+    # ── Read stereo PCM (WAV directly, OGG/MP3/etc. via ffmpeg) ──
+    left = None
+    right = None
+    framerate = 16000
     try:
         with wave.open(str(audio_file), "r") as wf:
             n_channels = wf.getnchannels()
             sampwidth = wf.getsampwidth()
-            framerate = wf.getframerate()
-            n_frames = wf.getnframes()
-            raw = wf.readframes(n_frames)
+            wf_rate = wf.getframerate()
+            if n_channels == 2 and sampwidth == 2:
+                raw = wf.readframes(wf.getnframes())
+                data = np.frombuffer(raw, dtype=np.int16).reshape(-1, 2)
+                left = data[:, 0].astype(np.float32)  # mic (YOU)
+                right = data[:, 1].astype(np.float32)  # system (REMOTE)
+                framerate = wf_rate
     except Exception:
-        # Non-WAV format (e.g. OGG/Opus) — fall through to ffmpeg.
-        n_channels = 0
-        sampwidth = 0
-        framerate = 0
-        raw = b""
+        pass
 
-    if n_channels != 2 or sampwidth != 2:
-        # Not the expected stereo 16-bit — fall through to ffmpeg.
+    if left is None or right is None:
+        # Non-WAV stereo format (e.g. OGG/Opus uploaded by vezir): decode to
+        # 16 kHz stereo PCM via ffmpeg so it still gets RMS-balanced mixdown.
+        decoded = _load_stereo_int16(audio_file)
+        if decoded is not None:
+            left = decoded[0].astype(np.float32)
+            right = decoded[1].astype(np.float32)
+            framerate = 16000
+
+    if left is None or right is None:
+        # Not stereo / unreadable — fall through to ffmpeg average.
         tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
         tmp.close()
         cmd = [
@@ -1023,10 +1204,6 @@ def _mixdown_to_mono(audio_file: Path) -> Path:
                 pass
             raise RuntimeError(f"Mono mixdown failed: {result.stderr}")
         return Path(tmp.name)
-
-    data = np.frombuffer(raw, dtype=np.int16).reshape(-1, 2)
-    left = data[:, 0].astype(np.float32)  # mic (YOU)
-    right = data[:, 1].astype(np.float32)  # system (REMOTE)
 
     # ── RMS of each channel (ignore near-silence) ──
     silence_thr = 50.0  # ~-50 dBFS for 16-bit
@@ -1107,6 +1284,43 @@ def _empty_torch_caches(torch_module, config: TranscriptionConfig) -> None:
         _empty_torch_cache(torch_module, config.torch_device)
 
 
+def _resolve_asr_vocabulary(
+    config: TranscriptionConfig,
+) -> tuple[Any, str | None, str | None]:
+    """Resolve vocabulary, initial_prompt, and hotwords for ASR decoding.
+
+    Returns ``(vocab, initial_prompt, hotwords)``.  Never raises on missing or
+    malformed files.
+    """
+    from millet.vocabulary import (
+        Vocabulary,
+        build_hotwords,
+        build_initial_prompt,
+        load_vocabulary,
+        speaker_names_from_profiles,
+    )
+
+    if config.vocabulary_path is not None:
+        vocab = load_vocabulary(path=config.vocabulary_path)
+    elif config.auto_vocabulary:
+        vocab = load_vocabulary()
+    else:
+        vocab = Vocabulary()
+
+    extra_terms = speaker_names_from_profiles() if config.auto_vocabulary else ()
+    initial_prompt = build_initial_prompt(
+        vocab,
+        extra_terms=extra_terms,
+        base_prompt=config.initial_prompt,
+    )
+    hotwords = build_hotwords(
+        vocab,
+        extra_terms=extra_terms,
+        base_hotwords=config.hotwords,
+    )
+    return vocab, initial_prompt, hotwords
+
+
 def _load_whisperx_asr_model(config: TranscriptionConfig, language: str | None):
     import whisperx
 
@@ -1114,6 +1328,13 @@ def _load_whisperx_asr_model(config: TranscriptionConfig, language: str | None):
         "vad_onset": config.vad_onset,
         "vad_offset": config.vad_offset,
     }
+    _vocab, initial_prompt, hotwords = _resolve_asr_vocabulary(config)
+    asr_options: dict[str, Any] = {}
+    if initial_prompt:
+        asr_options["initial_prompt"] = initial_prompt
+    if hotwords:
+        asr_options["hotwords"] = hotwords
+
     device_note = ""
     if config.device == "cpu":
         if config._device_auto_fallback:
@@ -1123,13 +1344,41 @@ def _load_whisperx_asr_model(config: TranscriptionConfig, language: str | None):
     print(
         f"  Loading model: {config.model} ({config.compute_type}) on {config.device}{device_note}"
     )
-    return whisperx.load_model(
-        config.model,
-        config.device,
-        compute_type=config.compute_type,
-        language=language,
-        vad_options=vad_options,
-    )
+    if asr_options:
+        print(
+            f"  Vocabulary bias: {len(initial_prompt or '')} chars prompt"
+            + (" + hotwords" if "hotwords" in asr_options else "")
+        )
+
+    load_kwargs: dict[str, Any] = {
+        "compute_type": config.compute_type,
+        "language": language,
+        "vad_options": vad_options,
+    }
+    if asr_options:
+        load_kwargs["asr_options"] = asr_options
+    try:
+        return whisperx.load_model(
+            config.model,
+            config.device,
+            **load_kwargs,
+        )
+    except TypeError:
+        # Older whisperx / faster-whisper builds may reject `hotwords` inside
+        # TranscriptionOptions; retry with initial_prompt only before failing.
+        if "asr_options" in load_kwargs and "hotwords" in load_kwargs["asr_options"]:
+            trimmed = {k: v for k, v in asr_options.items() if k != "hotwords"}
+            if trimmed:
+                load_kwargs["asr_options"] = trimmed
+            else:
+                load_kwargs.pop("asr_options", None)
+            log.debug("whisperx rejected hotwords in asr_options; retrying without hotwords")
+            return whisperx.load_model(
+                config.model,
+                config.device,
+                **load_kwargs,
+            )
+        raise
 
 
 def _run_whisperx_asr(
@@ -1178,9 +1427,12 @@ def _transcribe_asr(
         print(f"  Loading MLX model: {config.mlx_model}")
         if _hf_offline() and not _mlx_model_cached(config.mlx_model):
             raise OfflineModelMissing(config.mlx_model, backend="mlx")
-        decode_options = {}
+        _vocab, initial_prompt, _hotwords = _resolve_asr_vocabulary(config)
+        decode_options: dict[str, Any] = {}
         if language is not None:
             decode_options["language"] = language
+        if initial_prompt:
+            decode_options["initial_prompt"] = initial_prompt
         result = mlx_whisper.transcribe(
             audio,
             path_or_hf_repo=config.mlx_model,
@@ -1225,7 +1477,11 @@ def _transcribe_asr(
 
 
 def _transcribe_dual_channel(
-    audio_file: Path, config: TranscriptionConfig, duration: float
+    audio_file: Path,
+    config: TranscriptionConfig,
+    duration: float,
+    *,
+    stereo_chans: tuple[Any, Any] | None = None,
 ) -> Transcript:
     """Transcribe each stereo channel separately and merge results.
 
@@ -1244,8 +1500,9 @@ def _transcribe_dual_channel(
     asr_model = None
 
     try:
-        mic_path = _extract_mono(audio_file, channel=0)
-        sys_path = _extract_mono(audio_file, channel=1)
+        if stereo_chans is None:
+            mic_path = _extract_mono(audio_file, channel=0)
+            sys_path = _extract_mono(audio_file, channel=1)
 
         whisper_lang = None if config.language == "auto" else config.language
 
@@ -1259,7 +1516,11 @@ def _transcribe_dual_channel(
 
         # ── Mic channel: detect → bias → transcribe with that language ──
         print("  Transcribing mic channel (left)...")
-        mic_audio = whisperx.load_audio(str(mic_path))
+        if stereo_chans is not None:
+            mic_audio = stereo_chans[0].astype(np.float32)
+            mic_audio *= np.float32(1.0 / 32768.0)
+        else:
+            mic_audio = whisperx.load_audio(str(mic_path))
         if pad_samples > 0:
             mic_audio = np.concatenate(
                 [mic_audio, np.zeros(pad_samples, dtype=mic_audio.dtype)]
@@ -1273,7 +1534,11 @@ def _transcribe_dual_channel(
 
         # ── System channel: detect → bias → transcribe ──
         print("  Transcribing system channel (right)...")
-        sys_audio = whisperx.load_audio(str(sys_path))
+        if stereo_chans is not None:
+            sys_audio = stereo_chans[1].astype(np.float32)
+            sys_audio *= np.float32(1.0 / 32768.0)
+        else:
+            sys_audio = whisperx.load_audio(str(sys_path))
         if pad_samples > 0:
             sys_audio = np.concatenate(
                 [sys_audio, np.zeros(pad_samples, dtype=sys_audio.dtype)]
@@ -1309,13 +1574,16 @@ def _transcribe_dual_channel(
             print(f"  Summary/transcript language: {detected_language}")
 
         # ── Align each channel with the language its text was DECODED in ──
-        mic_result = _align_channel(
-            mic_result, mic_audio, mic_decode_lang or mic_lang,
-            config, torch, whisperx,
-        )
-        sys_result = _align_channel(
-            sys_result, sys_audio, sys_decode_lang or sys_lang,
-            config, torch, whisperx,
+        mic_result, sys_result = _align_dual_channels(
+            mic_result,
+            mic_audio,
+            mic_decode_lang or mic_lang,
+            sys_result,
+            sys_audio,
+            sys_decode_lang or sys_lang,
+            config,
+            torch,
+            whisperx,
         )
 
         # ── Merge segments ──
@@ -1588,6 +1856,93 @@ def _align_channel(result, audio, lang, config, torch, whisperx):
         return result
 
 
+def _align_dual_channels(
+    mic_result,
+    mic_audio,
+    mic_lang: str,
+    sys_result,
+    sys_audio,
+    sys_lang: str,
+    config,
+    torch,
+    whisperx,
+):
+    """Align mic + system channels, loading the alignment model ONCE when
+    both channels share the same language.
+
+    Falls back to independent per-channel loads when the channels have
+    different languages.
+    """
+    if config.skip_alignment:
+        return mic_result, sys_result
+
+    if mic_lang != sys_lang:
+        mic_aligned = _align_channel(
+            mic_result, mic_audio, mic_lang, config, torch, whisperx
+        )
+        sys_aligned = _align_channel(
+            sys_result, sys_audio, sys_lang, config, torch, whisperx
+        )
+        return mic_aligned, sys_aligned
+
+    lang = mic_lang
+    mic_segs = mic_result.get("segments") or []
+    sys_segs = sys_result.get("segments") or []
+    if not mic_segs and not sys_segs:
+        return mic_result, sys_result
+
+    if lang in ALIGNMENT_MODELS and not check_alignment_model_cached(lang):
+        gc.collect()
+        _empty_torch_cache(torch, config.torch_device)
+        raise AlignmentModelMissing(lang)
+
+    try:
+        model_a, metadata = whisperx.load_align_model(
+            language_code=lang,
+            device=config.torch_device,
+        )
+        try:
+            mic_aligned = (
+                whisperx.align(
+                    mic_segs,
+                    model_a,
+                    metadata,
+                    mic_audio,
+                    config.torch_device,
+                    return_char_alignments=False,
+                )
+                if mic_segs
+                else mic_result
+            )
+            sys_aligned = (
+                whisperx.align(
+                    sys_segs,
+                    model_a,
+                    metadata,
+                    sys_audio,
+                    config.torch_device,
+                    return_char_alignments=False,
+                )
+                if sys_segs
+                else sys_result
+            )
+        finally:
+            del model_a
+            gc.collect()
+            _empty_torch_cache(torch, config.torch_device)
+        return mic_aligned, sys_aligned
+    except AlignmentModelMissing:
+        raise
+    except Exception as align_exc:
+        if lang in ALIGNMENT_MODELS:
+            raise AlignmentModelMissing(lang) from align_exc
+        print(
+            f"  Warning: alignment failed for '{lang}' ({align_exc}), "
+            "continuing without word-level timestamps"
+        )
+        return mic_result, sys_result
+
+
 def _consolidate_remote_clusters(
     sys_segments: list,
     config: TranscriptionConfig,
@@ -1858,7 +2213,11 @@ def _consolidate_dual_diarize_speakers(
 
 
 def _transcribe_dual_diarize(
-    audio_file: Path, config: TranscriptionConfig, duration: float
+    audio_file: Path,
+    config: TranscriptionConfig,
+    duration: float,
+    *,
+    stereo_chans: tuple[Any, Any] | None = None,
 ) -> Transcript:
     """Dual-channel transcribe + system-channel diarization.
 
@@ -1890,8 +2249,9 @@ def _transcribe_dual_diarize(
     asr_model = None
 
     try:
-        mic_path = _extract_mono(audio_file, channel=0)
-        sys_path = _extract_mono(audio_file, channel=1)
+        if stereo_chans is None:
+            mic_path = _extract_mono(audio_file, channel=0)
+            sys_path = _extract_mono(audio_file, channel=1)
 
         whisper_lang = None if config.language == "auto" else config.language
 
@@ -1909,7 +2269,11 @@ def _transcribe_dual_diarize(
         # default-language bias is applied to the per-channel language so a
         # low-confidence minority detection is overridden by the default.
         print("  Transcribing mic channel (left / YOU)...")
-        mic_audio = whisperx.load_audio(str(mic_path))
+        if stereo_chans is not None:
+            mic_audio = stereo_chans[0].astype(np.float32)
+            mic_audio *= np.float32(1.0 / 32768.0)
+        else:
+            mic_audio = whisperx.load_audio(str(mic_path))
         if pad_samples > 0:
             mic_audio = np.concatenate(
                 [mic_audio, np.zeros(pad_samples, dtype=mic_audio.dtype)]
@@ -1923,7 +2287,11 @@ def _transcribe_dual_diarize(
 
         # ── System channel (remotes): detect → bias → transcribe ──
         print("  Transcribing system channel (right / remotes)...")
-        sys_audio = whisperx.load_audio(str(sys_path))
+        if stereo_chans is not None:
+            sys_audio = stereo_chans[1].astype(np.float32)
+            sys_audio *= np.float32(1.0 / 32768.0)
+        else:
+            sys_audio = whisperx.load_audio(str(sys_path))
         if pad_samples > 0:
             sys_audio = np.concatenate(
                 [sys_audio, np.zeros(pad_samples, dtype=sys_audio.dtype)]
@@ -1964,15 +2332,21 @@ def _transcribe_dual_diarize(
         # Alignment must match the transcribed text's language, which is the
         # (possibly default-language-biased) decode language, not the raw
         # detection.  When decode_lang is None (auto, non-whisperx) fall back to
-        # the detected language.
-        mic_result = _align_channel(
-            mic_result, mic_audio, mic_decode_lang or mic_lang,
-            config, torch, whisperx,
+        # the detected language.  Shares a single wav2vec2 load when both
+        # channels decode in the same language.
+        mic_result, sys_result = _align_dual_channels(
+            mic_result,
+            mic_audio,
+            mic_decode_lang or mic_lang,
+            sys_result,
+            sys_audio,
+            sys_decode_lang or sys_lang,
+            config,
+            torch,
+            whisperx,
         )
-        sys_result = _align_channel(
-            sys_result, sys_audio, sys_decode_lang or sys_lang,
-            config, torch, whisperx,
-        )
+        # Release the normalized mic float32 buffer before loading pyannote.
+        del mic_audio
 
         # ── Diarize system channel (split remotes) ──
         if config.hf_token:
@@ -2066,6 +2440,7 @@ def _transcribe_dual_diarize(
                     mic_segments,
                     sys_segments,
                     margin=config.channel_correct_margin,
+                    stereo_chans=stereo_chans,
                 )
             except Exception as exc:  # never fail transcription over this
                 print(f"  Warning: mic-bleed correction skipped ({exc})")
@@ -2100,6 +2475,19 @@ def _transcribe_dual_diarize(
                     p.unlink()
                 except OSError:
                     pass
+
+
+def _apply_transcript_vocabulary(
+    transcript: Transcript, config: TranscriptionConfig
+) -> Transcript:
+    """Apply deterministic post-ASR vocabulary aliases to *transcript* in place."""
+    from millet.vocabulary import apply_vocabulary_to_transcript
+
+    vocab, _prompt, _hotwords = _resolve_asr_vocabulary(config)
+    n = apply_vocabulary_to_transcript(transcript, vocab)
+    if n:
+        print(f"  Vocabulary: applied {n} alias correction(s)")
+    return transcript
 
 
 def transcribe(
@@ -2144,14 +2532,21 @@ def transcribe(
     single_source = False
 
     if is_stereo and config.use_dual_channel and config.mixdown == "dual-diarize":
+        # Decode stereo ONCE (as int16) ONLY when duration is known and within
+        # the memory budget.  Over-budget and unknown-duration files stream the
+        # full file in O(1) memory for single-source detection and use
+        # disk-backed per-channel temp WAVs for ASR/diarization.
+        within_mem_budget = bool(duration and 0 < duration <= MAX_IN_MEMORY_STEREO_SECONDS)
+        stereo_chans = _load_stereo_int16(audio_path) if within_mem_budget else None
         # The dual-diarize path treats the mic channel as a single local
         # speaker.  For an in-room recording (multiple people share the mic,
         # system channel silent or a duplicate of the mic) that collapses
         # everyone into one speaker — fall back to the mono path, which
         # diarizes the combined signal and splits the in-room speakers.
         if config.single_source_fallback and _is_single_source_stereo(
-            audio_path, config
+            audio_path, config, chans=stereo_chans
         ):
+            stereo_chans = None
             single_source = True
             print(
                 "  Single-source stereo detected (system channel inactive or "
@@ -2159,11 +2554,18 @@ def transcribe(
             )
         else:
             print("  Dual-channel detected: transcribing channels separately + diarizing remotes")
-            return _transcribe_dual_diarize(audio_path, config, duration)
+            return _apply_transcript_vocabulary(
+                _transcribe_dual_diarize(
+                    audio_path, config, duration, stereo_chans=stereo_chans
+                ),
+                config,
+            )
 
     if is_stereo and config.use_dual_channel and config.mixdown == "dual":
         print("  Dual-channel detected: transcribing channels separately")
-        return _transcribe_dual_channel(audio_path, config, duration)
+        return _apply_transcript_vocabulary(
+            _transcribe_dual_channel(audio_path, config, duration), config
+        )
 
     if is_stereo and config.use_dual_channel:
         mono_path = _mixdown_to_mono(audio_path)
@@ -2351,12 +2753,15 @@ def transcribe(
                     margin=config.channel_correct_margin,
                 )
 
-        return Transcript(
-            segments=segments,
-            speakers=speakers,
-            language=detected_language,
-            audio_file=str(audio_path),
-            duration=duration,
+        return _apply_transcript_vocabulary(
+            Transcript(
+                segments=segments,
+                speakers=speakers,
+                language=detected_language,
+                audio_file=str(audio_path),
+                duration=duration,
+            ),
+            config,
         )
 
     finally:
@@ -2497,8 +2902,10 @@ def _seg_channel_ratio(mic, sys_, start_t, end_t, sr, n):
     end = max(0, min(int((end_t if end_t is not None else start_t) * sr), n))
     if end <= start:
         return None
-    mic_rms = float(np.sqrt(np.mean(mic[start:end] ** 2)))
-    sys_rms = float(np.sqrt(np.mean(sys_[start:end] ** 2)))
+    mic_win = mic[start:end].astype(np.float32, copy=False)
+    sys_win = sys_[start:end].astype(np.float32, copy=False)
+    mic_rms = float(np.sqrt(np.mean(mic_win ** 2)))
+    sys_rms = float(np.sqrt(np.mean(sys_win ** 2)))
     denom = mic_rms + sys_rms
     if denom < 1e-8:
         return None
@@ -2678,6 +3085,7 @@ def _correct_mic_bleed_segments(
     margin: float = 0.30,
     word_sys_frac: float = 0.60,
     dup_sim: float = 0.70,
+    stereo_chans: tuple[Any, Any] | None = None,
 ) -> list[Segment]:
     """Reassign mic-channel ("YOU") segments that are actually remote bleed.
 
@@ -2710,13 +3118,16 @@ def _correct_mic_bleed_segments(
     if not mic_segments:
         return mic_segments
 
-    stereo = read_stereo_channels(stereo_file)
-    if stereo is None:
-        return mic_segments
-
-    mic = stereo.mic
-    sys_ = stereo.system
-    sr = stereo.sample_rate
+    if stereo_chans is not None:
+        mic, sys_ = stereo_chans
+        sr = 16000
+    else:
+        stereo = read_stereo_channels(stereo_file)
+        if stereo is None:
+            return mic_segments
+        mic = stereo.mic
+        sys_ = stereo.system
+        sr = stereo.sample_rate
     n = len(mic)
     lo = 0.5 - margin
 

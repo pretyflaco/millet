@@ -88,6 +88,7 @@ def _apply_json_mode(
     ollama_singlepass: bool,
     update_profiles: bool,
     team_profiles_path: Path | None,
+    apply_vocabulary: bool = False,
 ) -> None:
     """Non-interactive label application from a JSON map.
 
@@ -134,7 +135,7 @@ def _apply_json_mode(
             label_map[str(spk_id)] = name.strip()
 
     regenerate_summary = not no_summary
-    if not label_map and not regenerate_summary and not summary_language:
+    if not label_map and not regenerate_summary and not summary_language and not apply_vocabulary:
         click.echo("No labels to apply and no summary regeneration requested.")
         return
 
@@ -166,6 +167,7 @@ def _apply_json_mode(
             summary_template=summary_template,
             ollama_singlepass=ollama_singlepass,
             progress_callback=lambda msg: click.echo(f"  {msg}"),
+            apply_vocabulary=apply_vocabulary,
         )
     except Exception as exc:
         click.echo(f"Error: apply failed: {exc}", err=True)
@@ -302,7 +304,14 @@ def _apply_json_mode(
          "DB from the applied (human-confirmed) labels. Non-fatal on "
          "failure. Uses --team's DB when given.",
 )
-def label(session_dir, no_audio, no_summary, auto, summary_preset, summary_backend, summary_model, ollama_singlepass, team, apply_json, summary_language, summary_template, update_profiles):
+@click.option(
+    "--apply-vocabulary",
+    is_flag=True,
+    default=False,
+    help="Apply deterministic alias replacements from vocabulary.json to "
+         "the session transcript before saving/summarizing.",
+)
+def label(session_dir, no_audio, no_summary, auto, summary_preset, summary_backend, summary_model, ollama_singlepass, team, apply_json, summary_language, summary_template, update_profiles, apply_vocabulary):
     """Assign real names to speakers in a transcribed session.
 
     \b
@@ -356,6 +365,7 @@ def label(session_dir, no_audio, no_summary, auto, summary_preset, summary_backe
             ollama_singlepass=ollama_singlepass,
             update_profiles=update_profiles,
             team_profiles_path=team_profiles_path,
+            apply_vocabulary=apply_vocabulary,
         )
         return
     files = _find_session_files(session_path)
@@ -643,14 +653,18 @@ def label(session_dir, no_audio, no_summary, auto, summary_preset, summary_backe
                 except Exception:
                     pass
 
-    if not label_map:
+    if not label_map and not apply_vocabulary:
         click.echo("No labels changed. Nothing to do.")
         return
 
-    click.echo("Applying labels:")
-    for old, new in sorted(label_map.items()):
-        click.echo(f"  {old} -> {new}")
-    click.echo()
+    if label_map:
+        click.echo("Applying labels:")
+        for old, new in sorted(label_map.items()):
+            click.echo(f"  {old} -> {new}")
+        click.echo()
+    elif apply_vocabulary:
+        click.echo("Applying vocabulary aliases...")
+        click.echo()
 
     # Snapshot the pre-relabel segments (original speaker ids) BEFORE
     # apply_labels rewrites the transcript JSON with the confirmed names.
@@ -669,8 +683,10 @@ def label(session_dir, no_audio, no_summary, auto, summary_preset, summary_backe
         summary_preset=summary_preset,
         summary_backend=summary_backend,
         summary_model=summary_model,
+        summary_language=summary_language,
         summary_template=summary_template,
         ollama_singlepass=ollama_singlepass,
+        apply_vocabulary=apply_vocabulary,
         progress_callback=lambda msg: click.echo(f"  {msg}"),
     )
 
