@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — fix: `millet gui` import error when GTK4 is installed
+
+`millet/gui.py` pinned only `Gtk` to 3.0 and imported `Gdk` unversioned.
+On systems that also have GTK4, `Gdk` resolved to 4.0 and the import failed
+with `Requiring namespace 'Gdk' version '3.0', but '4.0' is already loaded`.
+`Gdk` is now pinned to 3.0 as well (#26).  A source-level test checks that
+every GTK3/GTK4-split namespace imported in `gui.py` is pinned first.
+
 ## v0.23.2 — no deployment- or organization-specific references
 
 No behavior change.

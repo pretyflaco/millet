@@ -58,6 +58,8 @@ from pathlib import Path
 import gi
 
 gi.require_version("Gtk", "3.0")
+# Gdk must be pinned too: unversioned, it resolves to 4.0 when GTK4 is installed.
+gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk, Pango
 
 from millet.capture import DRAIN_SECONDS
