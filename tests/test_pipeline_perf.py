@@ -340,3 +340,43 @@ def test_stream_stereo_stats_matches_in_memory_with_unaligned_pipe_reads(
     assert abs(r_rms - exp_r) < 1e-6
     assert corr is not None and abs(corr - exp_corr) < 1e-6
 
+
+def test_is_single_source_stereo_direct_chans_uses_bounded_chunks_and_memory(
+    tmp_path: Path, monkeypatch
+):
+    """Direct in-memory chans path must chunk updates to keep temporary RAM O(1)."""
+    import tracemalloc
+
+    n = 1_000_000  # >6x _STEREO_STREAM_CHUNK_FRAMES (160,000)
+    rng = np.random.default_rng(7)
+    left = rng.integers(-6000, 6000, size=n, dtype=np.int16)
+    right = rng.integers(-6000, 6000, size=n, dtype=np.int16)
+
+    chunk_sizes: list[int] = []
+    orig_update = tr_mod._StereoStatsAccumulator.update
+
+    def _spy_update(self, l_chunk, r_chunk):
+        chunk_sizes.append(min(int(l_chunk.size), int(r_chunk.size)))
+        return orig_update(self, l_chunk, r_chunk)
+
+    monkeypatch.setattr(tr_mod._StereoStatsAccumulator, "update", _spy_update)
+
+    tracemalloc.start()
+    try:
+        res = tr_mod._is_single_source_stereo(
+            tmp_path / "unused.ogg",
+            tr_mod.TranscriptionConfig(),
+            chans=(left, right),
+        )
+        _cur, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert res is False
+    assert len(chunk_sizes) == 7  # ceil(1_000_000 / 160_000)
+    assert max(chunk_sizes) <= tr_mod._STEREO_STREAM_CHUNK_FRAMES
+    assert sum(chunk_sizes) == n
+    # Unchunked 1M frames allocated ~48 MB (6 float64 arrays); bounded 160k
+    # chunks peak around ~8 MB.
+    assert peak_bytes < 16 * 1024 * 1024, f"Peak temporary memory too high: {peak_bytes / 1e6:.1f} MB"
+

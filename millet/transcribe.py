@@ -864,9 +864,11 @@ def _extract_mono(audio_file: Path, channel: int = 0) -> Path:
 # Cap in-memory stereo reuse to ~1 hour (16 kHz stereo int16 ≈ 230 MB) so
 # multi-hour recordings fall back to disk-backed per-channel temp WAVs.
 MAX_IN_MEMORY_STEREO_SECONDS = 3600
-# Streaming read chunk for O(1)-memory single-source stereo analysis:
-# 10 s of 16 kHz stereo int16 = 640 KB per read.
-_STEREO_STREAM_CHUNK_BYTES = 16000 * 10 * 4
+# Bounded chunk size for O(1)-memory single-source stereo analysis (both
+# streaming and direct in-memory channels): 10 s at 16 kHz = 160,000 frames
+# (~640 KB int16 / ~7.7 MB peak float64 temporaries).
+_STEREO_STREAM_CHUNK_FRAMES = 16000 * 10
+_STEREO_STREAM_CHUNK_BYTES = _STEREO_STREAM_CHUNK_FRAMES * 4
 
 
 def _load_stereo_int16(audio_file: Path):
@@ -1081,7 +1083,10 @@ def _is_single_source_stereo(
             return False
         left, right = chans
         acc = _StereoStatsAccumulator()
-        acc.update(left, right)
+        total = min(int(left.size), int(right.size))
+        for start in range(0, total, _STEREO_STREAM_CHUNK_FRAMES):
+            end = start + _STEREO_STREAM_CHUNK_FRAMES
+            acc.update(left[start:end], right[start:end])
         stats: tuple[float, float, int, float | None] | None = (
             acc.finalize() if acc.n > 0 else None
         )
