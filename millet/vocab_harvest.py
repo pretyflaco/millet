@@ -560,13 +560,15 @@ def harvest_vocabulary(
     seed_loaded = [tf for tf in seed_files if tf in corpus_by_path]
     holdout_loaded = [tf for tf in transcript_files if tf in holdout_set and tf in corpus_by_path]
 
-    # Index already-configured aliases case-insensitively.
+    # Index already-configured aliases, terms, and glossary case-insensitively.
     existing_alias_pairs: set[tuple[str, str]] = {
         (canon.casefold(), var.casefold())
         for canon, variants in vocab.aliases.items()
         for var in variants
     }
     existing_canon_by_cf: dict[str, str] = {t.casefold(): t for t in vocab.all_terms}
+    existing_terms_cf: set[str] = set(existing_canon_by_cf)
+    existing_glossary_cf: set[str] = {k.casefold() for k in vocab.glossary}
 
     call_fn = llm_caller or (
         lambda sys_p, usr_p: _call_private_llm(
@@ -576,7 +578,10 @@ def harvest_vocabulary(
 
     discovered: dict[tuple[str, str], _CandidateEvidence] = {}
     backend_label = ""
+    llm_attempts = 0
+    llm_successes = 0
     llm_errors = 0
+    last_llm_error: Exception | None = None
 
     for idx, tf in enumerate(seed_loaded, 1):
         sid, segs = corpus_by_path[tf]
@@ -586,16 +591,18 @@ def harvest_vocabulary(
 
         for chunk in chunks:
             sys_p, usr_p = _build_harvest_prompts(chunk, anchors)
+            llm_attempts += 1
             try:
                 raw_out, used_backend = call_fn(sys_p, usr_p)
+                llm_successes += 1
                 if used_backend:
                     backend_label = used_backend
             except Exception as exc:
                 llm_errors += 1
+                last_llm_error = exc
                 log.warning("Harvest LLM call failed for %s: %s", sid, exc)
-                # If no call has succeeded yet and it's a backend-unavailable
-                # error, propagate rather than silently returning an empty report.
-                if not backend_label and "No private LLM backend available" in str(exc):
+                # Fail fast if no private backend is configured at all.
+                if llm_successes == 0 and "No private LLM backend available" in str(exc):
                     raise
                 continue
 
@@ -622,6 +629,13 @@ def harvest_vocabulary(
                     ev.is_common_word = ev.is_common_word or item["is_common_word"]
                 ev.llm_hits += 1
                 ev.confidences.append(item["confidence"])
+
+    # If every single LLM call failed, propagate the failure loudly instead of
+    # returning a misleading empty "success" report.
+    if llm_attempts > 0 and llm_successes == 0 and last_llm_error is not None:
+        raise RuntimeError(
+            f"vocabulary harvest failed on all {llm_attempts} LLM call(s): {last_llm_error}"
+        ) from last_llm_error
 
     # Deterministic corpus-wide verification & example extraction.
     candidates_out: list[dict[str, Any]] = []
@@ -693,6 +707,19 @@ def harvest_vocabulary(
         )
         if chain_errors or existing_owner is not None:
             suggested = "term_only"
+
+        # Suppress candidates whose suggested layer is already satisfied in
+        # existing_vocab, while preserving genuinely new alias suggestions for
+        # existing canonical terms.
+        canon_cf = ev.canonical.casefold()
+        if suggested == "term_only" and canon_cf in existing_terms_cf:
+            continue
+        if (
+            suggested == "term_and_glossary"
+            and canon_cf in existing_terms_cf
+            and canon_cf in existing_glossary_cf
+        ):
+            continue
 
         # Prioritize up to 2 holdout examples so reviewers immediately see unseen
         # session behavior alongside seed examples.

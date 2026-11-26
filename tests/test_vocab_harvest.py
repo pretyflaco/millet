@@ -399,3 +399,122 @@ def test_cli_vocab_harvest_and_dry_run_and_0600_report(tmp_path: Path, monkeypat
     # Atomic write helper produces 0600 even on overwrite
     write_report_atomic({"ok": True}, out_report)
     assert stat.S_IMODE(out_report.stat().st_mode) == 0o600
+
+
+def test_harvest_raises_when_all_llm_calls_fail_and_allows_partial_success(tmp_path: Path):
+    root = tmp_path / "sessions"
+    _write_session(
+        root, "01FAIL1", [{"start": 1.0, "end": 2.0, "speaker": "Alice", "text": "Check vzr."}]
+    )
+    _write_session(
+        root, "01FAIL2", [{"start": 1.0, "end": 2.0, "speaker": "Bob", "text": "Deploy vzr."}]
+    )
+
+    def always_fail(_sys: str, _usr: str) -> tuple[str, str]:
+        raise RuntimeError("simulated TEE outage")
+
+    with pytest.raises(RuntimeError, match="simulated TEE outage"):
+        harvest_vocabulary(
+            [root],
+            min_occurrences=1,
+            min_sessions=1,
+            holdout_ratio=0.0,
+            llm_caller=always_fail,
+        )
+
+    # Partial failure (1 chunk fails, 1 succeeds) still yields a valid report.
+    calls = 0
+
+    def fail_then_succeed(_sys: str, _usr: str) -> tuple[str, str]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("transient blip")
+        return (
+            json.dumps({"candidates": [{"observed": "vzr", "canonical": "Vezir"}]}),
+            "tinfoil/test",
+        )
+
+    rep = harvest_vocabulary(
+        [root],
+        min_occurrences=2,
+        min_sessions=2,
+        holdout_ratio=0.0,
+        llm_caller=fail_then_succeed,
+    )
+    assert rep["llm_errors"] == 1
+    assert len(rep["candidates"]) == 1
+    assert rep["candidates"][0]["observed"] == "vzr"
+
+
+def test_second_harvest_suppresses_satisfied_layers_but_keeps_new_aliases(tmp_path: Path):
+    root = tmp_path / "sessions"
+    for i in range(1, 3):
+        _write_session(
+            root,
+            f"01R{i:02d}",
+            [
+                {
+                    "start": 1.0,
+                    "end": 3.0,
+                    "speaker": "Alice",
+                    "text": "Using whisper and caddy and the zeer and vizier.",
+                }
+            ],
+        )
+
+    def fake_llm(_sys: str, _usr: str) -> tuple[str, str]:
+        return (
+            json.dumps(
+                {
+                    "candidates": [
+                        # term_and_glossary, ALREADY in terms + glossary -> suppressed!
+                        {
+                            "observed": "whisper",
+                            "canonical": "WhisperX",
+                            "is_common_word": True,
+                        },
+                        # term_and_glossary, in terms ONLY (missing glossary) -> still suggested!
+                        {
+                            "observed": "caddy",
+                            "canonical": "CaddyProxy",
+                            "is_common_word": True,
+                        },
+                        # term_only (chain conflict) AND Vezir already in terms -> suppressed!
+                        {
+                            "observed": "vizier",
+                            "canonical": "Vezir",
+                            "is_common_word": False,
+                        },
+                        # Genuinely NEW alias for existing canonical term Vezir -> preserved!
+                        {
+                            "observed": "the zeer",
+                            "canonical": "Vezir",
+                            "is_common_word": False,
+                        },
+                    ]
+                }
+            ),
+            "tinfoil/test",
+        )
+
+    existing = Vocabulary.from_dict(
+        {
+            "terms": ["WhisperX", "CaddyProxy", "Vezir"],
+            "aliases": {"vizier": ["viz"]},
+            "glossary": {"WhisperX": "ASR alignment engine"},
+        }
+    )
+    rep = harvest_vocabulary(
+        [root],
+        existing_vocab=existing,
+        min_occurrences=2,
+        min_sessions=2,
+        holdout_ratio=0.0,
+        llm_caller=fake_llm,
+    )
+    by_obs = {c["observed"]: c for c in rep["candidates"]}
+    assert "whisper" not in by_obs  # term_and_glossary satisfied
+    assert "vizier" not in by_obs  # term_only satisfied (Vezir already in terms)
+    assert "caddy" in by_obs and by_obs["caddy"]["suggested_layer"] == "term_and_glossary"
+    assert "the zeer" in by_obs and by_obs["the zeer"]["suggested_layer"] == "alias"
