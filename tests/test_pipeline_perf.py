@@ -160,3 +160,90 @@ def test_millet_sync_cli_fallback_meeting_type_single_pass(tmp_path: Path, monke
     )
     assert res_bad.exit_code == 1
 
+
+def test_transcribe_over_budget_and_unknown_duration_skip_full_stereo_decode(
+    tmp_path: Path, monkeypatch
+):
+    """Over-limit and unknown-duration recordings must never call _load_stereo_int16()."""
+    import sys
+    import types
+
+    fake_audio = tmp_path / "long_call.ogg"
+    fake_audio.write_bytes(b"OggS")
+
+    # Stub heavy ML imports so this test runs in minimal CI (no torch/whisperx).
+    fake_torch = types.ModuleType("torch")
+    fake_wx = types.ModuleType("whisperx")
+    fake_diarize = types.ModuleType("whisperx.diarize")
+    fake_diarize.DiarizationPipeline = object  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "whisperx", fake_wx)
+    monkeypatch.setitem(sys.modules, "whisperx.diarize", fake_diarize)
+
+    def _forbid_full_decode(_path: Path):
+        raise AssertionError("_load_stereo_int16 must not be called over budget / unknown duration")
+
+    probe_calls: list[tuple[Path, float]] = []
+
+    def _fake_probe(path: Path, *, max_seconds: float = tr_mod.SINGLE_SOURCE_PROBE_SECONDS):
+        probe_calls.append((path, max_seconds))
+        # Return two distinct non-silent channels -> dual-source (not single-source).
+        t = np.linspace(0, 2.0, 32000, dtype=np.float32)
+        left = (np.sin(2 * np.pi * 220 * t) * 5000).astype(np.int16)
+        right = (np.sin(2 * np.pi * 660 * t) * 5000).astype(np.int16)
+        return left, right
+
+    seen_stereo_chans: list[object] = []
+
+    def _fake_dual_diarize(audio_file, config, duration, *, stereo_chans=None):
+        seen_stereo_chans.append(stereo_chans)
+        return tr_mod.Transcript(
+            segments=[],
+            speakers=[],
+            language="en",
+            audio_file=str(audio_file),
+        )
+
+    monkeypatch.setattr(tr_mod, "_load_stereo_int16", _forbid_full_decode)
+    monkeypatch.setattr(tr_mod, "_load_stereo_probe_int16", _fake_probe)
+    monkeypatch.setattr(tr_mod, "_transcribe_dual_diarize", _fake_dual_diarize)
+    monkeypatch.setattr(tr_mod, "_is_stereo", lambda _p: True)
+
+    for dur in (float(tr_mod.MAX_IN_MEMORY_STEREO_SECONDS + 120), 0.0, None):
+        monkeypatch.setattr(tr_mod, "get_audio_duration", lambda _p, _d=dur: _d)
+        cfg = tr_mod.TranscriptionConfig(
+            mixdown="dual-diarize",
+            use_dual_channel=True,
+            single_source_fallback=True,
+            auto_vocabulary=False,
+        )
+        tr_mod.transcribe(fake_audio, cfg)
+
+    assert len(probe_calls) == 3
+    assert all(s == tr_mod.SINGLE_SOURCE_PROBE_SECONDS for _, s in probe_calls)
+    assert seen_stereo_chans == [None, None, None]
+
+
+def test_load_stereo_probe_int16_passes_duration_cap_to_ffmpeg(tmp_path: Path, monkeypatch):
+    import subprocess
+
+    fake_audio = tmp_path / "call.ogg"
+    fake_audio.write_bytes(b"OggS")
+    cmds: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=False):
+        cmds.append(list(cmd))
+
+        class _R:
+            returncode = 0
+            stdout = np.zeros(40, dtype="<i2").tobytes()
+
+        return _R()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    res = tr_mod._load_stereo_probe_int16(fake_audio, max_seconds=45.0)
+    assert res is not None
+    assert len(cmds) == 1
+    assert "-t" in cmds[0]
+    assert cmds[0][cmds[0].index("-t") + 1] == "45.000"
+
