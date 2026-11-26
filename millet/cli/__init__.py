@@ -31,6 +31,7 @@ from .run import run
 from .sync import sync
 from .transcribe import transcribe
 from .translate import translate
+from .vocab import vocab
 
 __all__ = [
     "download",
@@ -43,6 +44,7 @@ __all__ = [
     "sync",
     "transcribe",
     "translate",
+    "vocab",
 ]
 
 
@@ -58,7 +60,7 @@ def main():
 # Register every command on the group.  (When invoked via the
 # millet-record host CLI, the commands are discovered through the
 # ``millet.subcommands`` entry-point group instead — see pyproject.toml.)
-for _cmd in (transcribe, run, download, translate, label, enroll, sync, gui, ingest):
+for _cmd in (transcribe, run, download, translate, label, enroll, sync, gui, ingest, vocab):
     main.add_command(_cmd)
 
 

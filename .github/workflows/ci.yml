@@ -100,4 +100,5 @@ jobs:
             tests/test_voiceprint_gate.py \
             tests/test_speaker_repair.py \
             tests/test_vocabulary.py \
+            tests/test_vocab_harvest.py \
             tests/test_pipeline_perf.py

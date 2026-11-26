@@ -82,6 +82,7 @@ enroll = "millet.cli:enroll"
 sync = "millet.cli:sync"
 gui = "millet.cli:gui"
 ingest = "millet.cli:ingest"
+vocab = "millet.cli:vocab"
 
 [project.entry-points."meet.subcommands"]
 transcribe = "millet.cli:transcribe"
@@ -93,6 +94,7 @@ enroll = "millet.cli:enroll"
 sync = "millet.cli:sync"
 gui = "millet.cli:gui"
 ingest = "millet.cli:ingest"
+vocab = "millet.cli:vocab"
 
 [project.urls]
 Homepage = "https://github.com/pretyflaco/millet"
